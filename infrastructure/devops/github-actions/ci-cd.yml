@@ -1,0 +1,336 @@
+name: AtlasBank CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  AZURE_WEBAPP_NAME: 'atlas-bank'
+  AZURE_RESOURCE_GROUP: 'atlas-bank-rg'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [
+          'Atlas.Common',
+          'Atlas.Messaging', 
+          'Atlas.Persistence',
+          'Atlas.Security',
+          'Atlas.Observability',
+          'Atlas.Testing',
+          'Atlas.Ledger',
+          'Atlas.Payments',
+          'Atlas.Cards',
+          'Atlas.KycAml',
+          'Atlas.Risk',
+          'Atlas.Identity',
+          'Atlas.ApiGateway'
+        ]
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build solution
+      run: dotnet build --no-restore --configuration Release
+
+    - name: Run tests
+      run: dotnet test --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage"
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.project }}
+        path: '**/TestResults/**'
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v3
+      with:
+        languages: csharp
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  container-scan:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Docker images
+      run: |
+        docker build -t atlas-ledger:latest -f src/Services/Atlas.Ledger/Dockerfile .
+        docker build -t atlas-payments:latest -f src/Services/Atlas.Payments/Dockerfile .
+        docker build -t atlas-api-gateway:latest -f src/Gateways/Atlas.ApiGateway/Dockerfile .
+
+    - name: Run Trivy container scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'atlas-ledger:latest'
+        format: 'sarif'
+        output: 'container-scan-results.sarif'
+
+    - name: Upload container scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'container-scan-results.sarif'
+
+  sbom-generation:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Generate SBOM
+      uses: anchore/sbom-action@v0
+      with:
+        path: .
+        format: spdx-json
+        output-file: sbom.spdx.json
+
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom
+        path: sbom.spdx.json
+
+  pact-contract-tests:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Run Pact contract tests
+      run: |
+        dotnet test tests/Atlas.Tests.Contracts/ --no-build --configuration Release
+        dotnet test tests/Atlas.Tests.Pact/ --no-build --configuration Release
+
+    - name: Publish Pact results
+      uses: pact-foundation/pact-publish-action@v1
+      with:
+        pact_files_or_dirs: 'pacts'
+        pact_broker: ${{ secrets.PACT_BROKER_URL }}
+        pact_broker_token: ${{ secrets.PACT_BROKER_TOKEN }}
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup k6
+      run: |
+        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+
+    - name: Run performance tests
+      run: |
+        k6 run tests/Atlas.Tests.Performance/load-test.js
+        k6 run tests/Atlas.Tests.Performance/stress-test.js
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-results
+        path: 'performance-results.json'
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [security-scan, container-scan, sbom-generation, pact-contract-tests]
+    if: github.ref == 'refs/heads/develop'
+    environment: staging
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.5.0
+
+    - name: Terraform Init
+      run: |
+        cd infrastructure/iac/azure
+        terraform init
+
+    - name: Terraform Plan
+      run: |
+        cd infrastructure/iac/azure
+        terraform plan -var="environment=staging" -out=tfplan
+
+    - name: Terraform Apply
+      run: |
+        cd infrastructure/iac/azure
+        terraform apply -auto-approve tfplan
+
+    - name: Build and push Docker images
+      run: |
+        az acr login --name ${{ secrets.ACR_NAME }}
+        docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/atlas-ledger:staging -f src/Services/Atlas.Ledger/Dockerfile .
+        docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/atlas-payments:staging -f src/Services/Atlas.Payments/Dockerfile .
+        docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/atlas-api-gateway:staging -f src/Gateways/Atlas.ApiGateway/Dockerfile .
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/atlas-ledger:staging
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/atlas-payments:staging
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/atlas-api-gateway:staging
+
+    - name: Deploy to AKS
+      run: |
+        az aks get-credentials --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} --name ${{ secrets.AKS_CLUSTER_NAME }}
+        kubectl apply -f infrastructure/k8s/staging/
+        kubectl rollout restart deployment/atlas-ledger -n atlas-bank-staging
+        kubectl rollout restart deployment/atlas-payments -n atlas-bank-staging
+        kubectl rollout restart deployment/atlas-api-gateway -n atlas-bank-staging
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [security-scan, container-scan, sbom-generation, pact-contract-tests, performance-tests]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.5.0
+
+    - name: Terraform Init
+      run: |
+        cd infrastructure/iac/azure
+        terraform init
+
+    - name: Terraform Plan
+      run: |
+        cd infrastructure/iac/azure
+        terraform plan -var="environment=prod" -out=tfplan
+
+    - name: Manual approval for production deployment
+      uses: trstringer/manual-approval@v1
+      with:
+        secret: ${{ github.TOKEN }}
+        approvers: atlas-bank-admins
+        minimum-approvals: 2
+        issue-title: "Production Deployment Approval"
+        issue-body: "Please review and approve the production deployment for AtlasBank."
+
+    - name: Terraform Apply
+      run: |
+        cd infrastructure/iac/azure
+        terraform apply -auto-approve tfplan
+
+    - name: Build and push Docker images
+      run: |
+        az acr login --name ${{ secrets.ACR_NAME }}
+        docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/atlas-ledger:latest -f src/Services/Atlas.Ledger/Dockerfile .
+        docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/atlas-payments:latest -f src/Services/Atlas.Payments/Dockerfile .
+        docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/atlas-api-gateway:latest -f src/Gateways/Atlas.ApiGateway/Dockerfile .
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/atlas-ledger:latest
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/atlas-payments:latest
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/atlas-api-gateway:latest
+
+    - name: Deploy to AKS with blue-green deployment
+      run: |
+        az aks get-credentials --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} --name ${{ secrets.AKS_CLUSTER_NAME }}
+        kubectl apply -f infrastructure/k8s/production/
+        
+        # Blue-green deployment strategy
+        kubectl patch deployment atlas-ledger -n atlas-bank-prod -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}}}}'
+        kubectl rollout restart deployment/atlas-ledger -n atlas-bank-prod
+        kubectl rollout status deployment/atlas-ledger -n atlas-bank-prod --timeout=600s
+        
+        kubectl patch deployment atlas-payments -n atlas-bank-prod -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}}}}'
+        kubectl rollout restart deployment/atlas-payments -n atlas-bank-prod
+        kubectl rollout status deployment/atlas-payments -n atlas-bank-prod --timeout=600s
+        
+        kubectl patch deployment atlas-api-gateway -n atlas-bank-prod -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}}}}'
+        kubectl rollout restart deployment/atlas-api-gateway -n atlas-bank-prod
+        kubectl rollout status deployment/atlas-api-gateway -n atlas-bank-prod --timeout=600s
+
+    - name: Run smoke tests
+      run: |
+        # Wait for services to be ready
+        kubectl wait --for=condition=available --timeout=300s deployment/atlas-api-gateway -n atlas-bank-prod
+        
+        # Run smoke tests
+        curl -f https://atlas-bank-prod.azurewebsites.net/health || exit 1
+        curl -f https://atlas-bank-prod.azurewebsites.net/api/accounts || exit 1
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Notify deployment status
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#atlas-bank-deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow

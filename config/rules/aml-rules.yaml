@@ -1,0 +1,7 @@
+velocity:
+  - id: high_velocity_ngn
+    field: amount
+    windowSeconds: 120
+    thresholdMinor: 100000000
+    currency: NGN
+    action: STEP_UP

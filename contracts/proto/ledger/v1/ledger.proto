@@ -1,0 +1,39 @@
+syntax = "proto3";
+package ledger.v1;
+option csharp_namespace = "Atlas.Contracts.Ledger.V1";
+
+message Money {
+  int64 minor = 1;
+  string currency = 2;
+  int32 scale = 3;
+}
+
+message PostEntryRequest {
+  string source_account_id = 1;
+  string destination_account_id = 2;
+  Money amount = 3;
+  string narration = 4;
+  string tenant_id = 5;
+}
+
+message PostEntryResponse {
+  string entry_id = 1;
+  string status = 2;
+}
+
+message GetBalanceRequest {
+  string account_id = 1;
+  string tenant_id = 2;
+}
+
+message GetBalanceResponse {
+  string account_id = 1;
+  int64 ledger_minor = 2;
+  string currency = 3;
+  int32 scale = 4;
+}
+
+service LedgerService {
+  rpc PostEntry (PostEntryRequest) returns (PostEntryResponse);
+  rpc GetBalance (GetBalanceRequest) returns (GetBalanceResponse);
+}

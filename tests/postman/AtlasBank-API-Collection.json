@@ -1,0 +1,202 @@
+{
+  "info": {
+    "name": "AtlasBank API Collection",
+    "description": "Complete API collection for AtlasBank services",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "tenantId",
+      "value": "tnt_demo",
+      "type": "string"
+    },
+    {
+      "key": "idempotencyKey",
+      "value": "{{$randomUUID}}",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Checks",
+      "item": [
+        {
+          "name": "Gateway Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          }
+        },
+        {
+          "name": "Ledger API Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "health"]
+            }
+          }
+        },
+        {
+          "name": "Payments API Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transfers", "health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ledger API",
+      "item": [
+        {
+          "name": "Get Account Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/test-account",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "test-account"]
+            }
+          }
+        },
+        {
+          "name": "Credit Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/test-account/credit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "test-account", "credit"]
+            }
+          }
+        },
+        {
+          "name": "Debit Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 50.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/accounts/test-account/debit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "accounts", "test-account", "debit"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments API",
+      "item": [
+        {
+          "name": "Create Transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100.00,\n  \"fromAccount\": \"test-from\",\n  \"toAccount\": \"test-to\",\n  \"reference\": \"Test transfer via Postman\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transfers"]
+            }
+          }
+        },
+        {
+          "name": "Create Transfer (Idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "fixed-idempotency-key"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 200.00,\n  \"fromAccount\": \"test-from\",\n  \"toAccount\": \"test-to\",\n  \"reference\": \"Idempotent test transfer\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transfers"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
