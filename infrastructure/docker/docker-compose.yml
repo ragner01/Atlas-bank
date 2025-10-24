@@ -251,6 +251,16 @@ services:
     depends_on: [clickhouse]
     ports: ["5301:5301"]
 
+  loansapi:
+    build: 
+      context: ../../
+      dockerfile: src/Loans/Atlas.Loans.Api/Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:5221
+      - ConnectionStrings__Loans=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+    depends_on: [postgres]
+    ports: ["5221:5221"]
+
 volumes:
   postgres_data:
   redis_data:
