@@ -34,18 +34,18 @@ public sealed class Worker : BackgroundService
         _inbox = new EfInbox(db);
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.Run(() => Loop(stoppingToken));
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) => Loop(stoppingToken);
 
-    private void Loop(CancellationToken ct)
+    private async Task Loop(CancellationToken ct)
     {
         var bucket = new List<long>(); var lastFlush = DateTimeOffset.UtcNow;
         while (!ct.IsCancellationRequested)
         {
             var cr = _consumer.Consume(TimeSpan.FromMilliseconds(250));
-            if (cr is null) { MaybeEval(ref bucket, ref lastFlush, ct); continue; }
+            if (cr is null) { continue; }
 
             var messageId = cr.Message.Key ?? Guid.NewGuid().ToString();
-            if (_inbox.HasProcessedAsync("aml-worker", messageId, ct).Result) continue;
+            if (await _inbox.HasProcessedAsync("aml-worker", messageId, ct)) continue;
 
             var (minor, currency, source, dest, tenant) = ParseEvent(cr.Message.Value);
             bucket.Add(minor);
@@ -57,14 +57,14 @@ public sealed class Worker : BackgroundService
                 _ => source
             };
 
-            MaybeEvalWithFeatures(ref bucket, ref lastFlush, ct, tenant, subject, currency).GetAwaiter().GetResult();
-            _inbox.MarkProcessedAsync("aml-worker", messageId, ct).GetAwaiter().GetResult();
+            (bucket, lastFlush) = await MaybeEvalWithFeatures(bucket, lastFlush, ct, tenant, subject, currency);
+            await _inbox.MarkProcessedAsync("aml-worker", messageId, ct);
         }
     }
 
-    private async Task MaybeEvalWithFeatures(ref List<long> bucket, ref DateTimeOffset lastFlush, CancellationToken ct, string tenant, string subject, string currency = "NGN")
+    private async Task<(List<long> bucket, DateTimeOffset lastFlush)> MaybeEvalWithFeatures(List<long> bucket, DateTimeOffset lastFlush, CancellationToken ct, string tenant, string subject, string currency = "NGN")
     {
-        if ((DateTimeOffset.UtcNow - lastFlush).TotalSeconds < 5) return;
+        if ((DateTimeOffset.UtcNow - lastFlush).TotalSeconds < 5) return (bucket, lastFlush);
         var local = _engine.EvaluateLocal(_rules, bucket, currency);
         var feature = await _engine.EvaluateWithFeaturesAsync(_rules, tenant, subject, currency, _features, ct);
         var hit = local.hit || feature.hit;
@@ -82,7 +82,8 @@ public sealed class Worker : BackgroundService
             }
             catch (Exception ex) { _log.LogError(ex, "Failed to emit AML case"); }
         }
-        bucket.Clear(); lastFlush = DateTimeOffset.UtcNow;
+        bucket.Clear();
+        return (bucket, DateTimeOffset.UtcNow);
     }
 
     private static (long minor, string currency, string source, string dest, string tenant) ParseEvent(string json)

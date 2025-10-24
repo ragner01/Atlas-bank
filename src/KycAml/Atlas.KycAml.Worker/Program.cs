@@ -4,6 +4,7 @@ using Atlas.KycAml.Domain;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Http;
 
 var b = Host.CreateApplicationBuilder(args);
 b.Services.AddSingleton<IRiskRuleEngine, RiskRuleEngine>();
