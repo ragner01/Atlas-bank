@@ -27,8 +27,8 @@ public class LedgerMetricsCollector : IHostedService
     private readonly Histogram<double> _journalEntryDuration;
 
     // Gauges
-    private readonly ObservableGauge<long> _activeConnections;
-    private readonly ObservableGauge<long> _pendingTransactions;
+    // private readonly ObservableGauge<long> _activeConnections;
+    // private readonly ObservableGauge<long> _pendingTransactions;
 
     public LedgerMetricsCollector(IServiceProvider serviceProvider, ILogger<LedgerMetricsCollector> logger)
     {
@@ -39,53 +39,40 @@ public class LedgerMetricsCollector : IHostedService
         // Initialize counters
         _transferRequestsTotal = _meter.CreateCounter<long>(
             "ledger_transfer_requests_total",
-            "Total number of transfer requests",
-            "currency", "tenant_id", "status");
+            "Total number of transfer requests");
 
         _transferRequestsFailed = _meter.CreateCounter<long>(
             "ledger_transfer_requests_failed_total",
-            "Total number of failed transfer requests",
-            "currency", "tenant_id", "error_type");
+            "Total number of failed transfer requests");
 
         _journalEntriesCreated = _meter.CreateCounter<long>(
             "ledger_journal_entries_created_total",
-            "Total number of journal entries created",
-            "tenant_id");
+            "Total number of journal entries created");
 
         _accountBalanceReads = _meter.CreateCounter<long>(
             "ledger_account_balance_reads_total",
-            "Total number of account balance reads",
-            "tenant_id", "source");
+            "Total number of account balance reads");
 
         _rateLimitHits = _meter.CreateCounter<long>(
             "ledger_rate_limit_hits_total",
-            "Total number of rate limit hits",
-            "endpoint", "client_type");
+            "Total number of rate limit hits");
 
         // Initialize histograms
         _transferDuration = _meter.CreateHistogram<double>(
             "ledger_transfer_duration_seconds",
-            "Duration of transfer operations in seconds",
-            "currency", "tenant_id");
+            "Duration of transfer operations in seconds");
 
         _balanceReadDuration = _meter.CreateHistogram<double>(
             "ledger_balance_read_duration_seconds",
-            "Duration of balance read operations in seconds",
-            "tenant_id", "source");
+            "Duration of balance read operations in seconds");
 
         _journalEntryDuration = _meter.CreateHistogram<double>(
             "ledger_journal_entry_duration_seconds",
-            "Duration of journal entry operations in seconds",
-            "tenant_id");
+            "Duration of journal entry operations in seconds");
 
-        // Initialize gauges
-        _activeConnections = _meter.CreateObservableGauge<long>(
-            "ledger_active_connections",
-            "Number of active database connections");
-
-        _pendingTransactions = _meter.CreateObservableGauge<long>(
-            "ledger_pending_transactions",
-            "Number of pending transactions");
+        // TODO: Add gauges when ObservableGauge API is clarified
+        // _activeConnections = _meter.CreateObservableGauge<long>(...);
+        // _pendingTransactions = _meter.CreateObservableGauge<long>(...);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -107,12 +94,9 @@ public class LedgerMetricsCollector : IHostedService
     public void RecordTransferRequest(string currency, string tenantId, bool success)
     {
         var status = success ? "success" : "failed";
-        _transferRequestsTotal.Add(1, new TagList
-        {
-            ["currency"] = currency,
-            ["tenant_id"] = tenantId,
-            ["status"] = status
-        });
+        _transferRequestsTotal.Add(1, new KeyValuePair<string, object?>("currency", currency),
+            new KeyValuePair<string, object?>("tenant_id", tenantId),
+            new KeyValuePair<string, object?>("status", status));
     }
 
     /// <summary>
@@ -120,12 +104,9 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordTransferFailure(string currency, string tenantId, string errorType)
     {
-        _transferRequestsFailed.Add(1, new TagList
-        {
-            ["currency"] = currency,
-            ["tenant_id"] = tenantId,
-            ["error_type"] = errorType
-        });
+        _transferRequestsFailed.Add(1, new KeyValuePair<string, object?>("currency", currency),
+            new KeyValuePair<string, object?>("tenant_id", tenantId),
+            new KeyValuePair<string, object?>("error_type", errorType));
     }
 
     /// <summary>
@@ -133,11 +114,8 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordTransferDuration(double durationSeconds, string currency, string tenantId)
     {
-        _transferDuration.Record(durationSeconds, new TagList
-        {
-            ["currency"] = currency,
-            ["tenant_id"] = tenantId
-        });
+        _transferDuration.Record(durationSeconds, new KeyValuePair<string, object?>("currency", currency),
+            new KeyValuePair<string, object?>("tenant_id", tenantId));
     }
 
     /// <summary>
@@ -145,10 +123,7 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordJournalEntryCreated(string tenantId)
     {
-        _journalEntriesCreated.Add(1, new TagList
-        {
-            ["tenant_id"] = tenantId
-        });
+        _journalEntriesCreated.Add(1, new KeyValuePair<string, object?>("tenant_id", tenantId));
     }
 
     /// <summary>
@@ -156,10 +131,7 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordJournalEntryDuration(double durationSeconds, string tenantId)
     {
-        _journalEntryDuration.Record(durationSeconds, new TagList
-        {
-            ["tenant_id"] = tenantId
-        });
+        _journalEntryDuration.Record(durationSeconds, new KeyValuePair<string, object?>("tenant_id", tenantId));
     }
 
     /// <summary>
@@ -167,11 +139,8 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordAccountBalanceRead(string tenantId, string source)
     {
-        _accountBalanceReads.Add(1, new TagList
-        {
-            ["tenant_id"] = tenantId,
-            ["source"] = source
-        });
+        _accountBalanceReads.Add(1, new KeyValuePair<string, object?>("tenant_id", tenantId),
+            new KeyValuePair<string, object?>("source", source));
     }
 
     /// <summary>
@@ -179,11 +148,8 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordBalanceReadDuration(double durationSeconds, string tenantId, string source)
     {
-        _balanceReadDuration.Record(durationSeconds, new TagList
-        {
-            ["tenant_id"] = tenantId,
-            ["source"] = source
-        });
+        _balanceReadDuration.Record(durationSeconds, new KeyValuePair<string, object?>("tenant_id", tenantId),
+            new KeyValuePair<string, object?>("source", source));
     }
 
     /// <summary>
@@ -191,11 +157,20 @@ public class LedgerMetricsCollector : IHostedService
     /// </summary>
     public void RecordRateLimitHit(string endpoint, string clientType)
     {
-        _rateLimitHits.Add(1, new TagList
-        {
-            ["endpoint"] = endpoint,
-            ["client_type"] = clientType
-        });
+        _rateLimitHits.Add(1, new KeyValuePair<string, object?>("endpoint", endpoint),
+            new KeyValuePair<string, object?>("client_type", clientType));
+    }
+
+    private long GetActiveConnectionsCount()
+    {
+        // TODO: Implement actual connection count retrieval
+        return 0;
+    }
+
+    private long GetPendingTransactionsCount()
+    {
+        // TODO: Implement actual pending transaction count retrieval
+        return 0;
     }
 }
 

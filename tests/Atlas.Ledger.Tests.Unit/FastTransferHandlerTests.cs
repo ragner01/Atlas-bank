@@ -4,6 +4,7 @@ using Npgsql;
 using System.Data;
 using Atlas.Ledger.App;
 using Atlas.Common.ValueObjects;
+using Xunit;
 
 namespace Atlas.Ledger.Tests.Unit;
 

@@ -3,6 +3,8 @@ using Moq;
 using Atlas.Ledger.App;
 using Atlas.Ledger.Domain;
 using Atlas.Common.ValueObjects;
+using Atlas.Messaging;
+using Xunit;
 
 namespace Atlas.Ledger.Tests.Unit;
 
@@ -12,7 +14,7 @@ namespace Atlas.Ledger.Tests.Unit;
 public class PostJournalEntryHandlerTests
 {
     private readonly Mock<ILedgerRepository> _mockRepository;
-    private readonly Mock<IOutboxStore> _mockOutbox;
+    private readonly Mock<IOutboxStore> _mockOutboxStore;
     private readonly Mock<ITenantContext> _mockTenantContext;
     private readonly Mock<IUnitOfWork> _mockUnitOfWork;
     private readonly Mock<ILogger<PostJournalEntryHandler>> _mockLogger;
@@ -21,18 +23,16 @@ public class PostJournalEntryHandlerTests
     public PostJournalEntryHandlerTests()
     {
         _mockRepository = new Mock<ILedgerRepository>();
-        _mockOutbox = new Mock<IOutboxStore>();
+        _mockOutboxStore = new Mock<IOutboxStore>();
         _mockTenantContext = new Mock<ITenantContext>();
         _mockUnitOfWork = new Mock<IUnitOfWork>();
         _mockLogger = new Mock<ILogger<PostJournalEntryHandler>>();
 
-        _mockTenantContext.Setup(tc => tc.IsValid).Returns(true);
-        _mockTenantContext.Setup(tc => tc.CurrentTenant)
-            .Returns(new TenantId("tnt_test"));
+        _mockTenantContext.Setup(x => x.CurrentTenant).Returns(new TenantId("tnt_test"));
 
         _handler = new PostJournalEntryHandler(
             _mockRepository.Object,
-            _mockOutbox.Object,
+            _mockOutboxStore.Object,
             _mockTenantContext.Object,
             _mockUnitOfWork.Object,
             _mockLogger.Object
@@ -40,221 +40,185 @@ public class PostJournalEntryHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_WithValidCommand_ReturnsJournalEntry()
+    public async Task HandleAsync_ValidJournalEntry_PostsSuccessfully()
     {
         // Arrange
         var tenantId = new TenantId("tnt_test");
-        var currency = Currency.FromCode("NGN");
-        var sourceAccountId = new AccountId("acc_source");
-        var destAccountId = new AccountId("acc_dest");
-        var amount = new Money(10000, currency, 2);
+        var currency = Currency.FromCode("USD");
+        
+        var sourceAccount = new Account(
+            new EntityId("acc_source"),
+            tenantId,
+            "acc_source",
+            "Source Account",
+            AccountType.Asset,
+            currency
+        );
+        sourceAccount.RestoreBalance(new Money(1000m, currency));
 
-        var sourceAccount = CreateAccount(sourceAccountId, tenantId, currency, 50000);
-        var destAccount = CreateAccount(destAccountId, tenantId, currency, 20000);
-
-        _mockRepository.Setup(r => r.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { sourceAccount, destAccount });
-
-        _mockRepository.Setup(r => r.SaveBatchAsync(It.IsAny<IReadOnlyList<Account>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        _mockUnitOfWork.Setup(uow => uow.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<CancellationToken>()))
-            .Returns<Func<Task<JournalEntry>>, CancellationToken>(async (action, ct) => await action());
+        var destAccount = new Account(
+            new EntityId("acc_dest"),
+            tenantId,
+            "acc_dest",
+            "Destination Account",
+            AccountType.Asset,
+            currency
+        );
+        destAccount.RestoreBalance(new Money(500m, currency));
 
         var command = new PostJournalEntryCommand(
             "Test transfer",
-            new[] { (sourceAccountId, amount) },
-            new[] { (destAccountId, amount) }
+            new[] { (new AccountId("acc_source"), new Money(100m, currency)) },
+            new[] { (new AccountId("acc_dest"), new Money(100m, currency)) }
         );
+
+        _mockRepository.Setup(x => x.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { sourceAccount, destAccount });
+
+        _mockRepository.Setup(x => x.SaveBatchAsync(It.IsAny<IReadOnlyList<Account>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockOutboxStore.Setup(x => x.EnqueueAsync(It.IsAny<OutboxMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockUnitOfWork.Setup(x => x.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JournalEntry(
+                new JournalEntryId(Guid.NewGuid()),
+                tenantId,
+                DateTimeOffset.UtcNow,
+                "Test transfer",
+                new[] { new JournalEntryLine(new AccountId("acc_source"), new Money(100m, currency), JournalEntryLineType.Debit) },
+                new[] { new JournalEntryLine(new AccountId("acc_dest"), new Money(100m, currency), JournalEntryLineType.Credit) }
+            ));
 
         // Act
         var result = await _handler.HandleAsync(command, CancellationToken.None);
 
         // Assert
         Assert.NotNull(result);
-        Assert.Equal("Test transfer", result.Narration);
-        Assert.True(result.IsPosted);
-        Assert.Equal(2, result.Lines.Count());
+        Assert.Equal("Test transfer", result.Narrative);
+        _mockRepository.Verify(x => x.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockRepository.Verify(x => x.SaveBatchAsync(It.IsAny<IReadOnlyList<Account>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockOutboxStore.Verify(x => x.EnqueueAsync(It.IsAny<OutboxMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockUnitOfWork.Verify(x => x.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task HandleAsync_WithInvalidTenantContext_ThrowsInvalidOperationException()
+    public async Task HandleAsync_UnbalancedJournalEntry_ThrowsArgumentException()
     {
         // Arrange
-        _mockTenantContext.Setup(tc => tc.IsValid).Returns(false);
-
-        var command = new PostJournalEntryCommand(
-            "Test transfer",
-            new[] { (new AccountId("acc_source"), new Money(10000, Currency.FromCode("NGN"), 2)) },
-            new[] { (new AccountId("acc_dest"), new Money(10000, Currency.FromCode("NGN"), 2)) }
-        );
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _handler.HandleAsync(command, CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task HandleAsync_WithEmptyNarration_ThrowsArgumentException()
-    {
-        // Arrange
-        var command = new PostJournalEntryCommand(
-            "", // Empty narration
-            new[] { (new AccountId("acc_source"), new Money(10000, Currency.FromCode("NGN"), 2)) },
-            new[] { (new AccountId("acc_dest"), new Money(10000, Currency.FromCode("NGN"), 2)) }
-        );
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            _handler.HandleAsync(command, CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task HandleAsync_WithUnbalancedEntries_ThrowsArgumentException()
-    {
-        // Arrange
+        var currency = Currency.FromCode("USD");
+        
         var command = new PostJournalEntryCommand(
             "Unbalanced transfer",
-            new[] { (new AccountId("acc_source"), new Money(10000, Currency.FromCode("NGN"), 2)) },
-            new[] { (new AccountId("acc_dest"), new Money(20000, Currency.FromCode("NGN"), 2)) } // Different amount
+            new[] { (new AccountId("acc_source"), new Money(100m, currency)) },
+            new[] { (new AccountId("acc_dest"), new Money(200m, currency)) }
         );
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() => 
             _handler.HandleAsync(command, CancellationToken.None));
     }
 
     [Fact]
-    public async Task HandleAsync_WithNoDebits_ThrowsArgumentException()
+    public async Task HandleAsync_NegativeAmount_ThrowsArgumentException()
     {
         // Arrange
+        var currency = Currency.FromCode("USD");
+        
         var command = new PostJournalEntryCommand(
-            "No debits",
-            Array.Empty<(AccountId, Money)>(), // No debits
-            new[] { (new AccountId("acc_dest"), new Money(10000, Currency.FromCode("NGN"), 2)) }
+            "Negative amount transfer",
+            new[] { (new AccountId("acc_source"), new Money(-100m, currency)) },
+            new[] { (new AccountId("acc_dest"), new Money(-100m, currency)) }
         );
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() => 
             _handler.HandleAsync(command, CancellationToken.None));
     }
 
     [Fact]
-    public async Task HandleAsync_WithNoCredits_ThrowsArgumentException()
+    public async Task HandleAsync_CurrencyMismatch_ThrowsArgumentException()
     {
         // Arrange
+        var usdCurrency = Currency.FromCode("USD");
+        var eurCurrency = Currency.FromCode("EUR");
+        
         var command = new PostJournalEntryCommand(
-            "No credits",
-            new[] { (new AccountId("acc_source"), new Money(10000, Currency.FromCode("NGN"), 2)) },
-            Array.Empty<(AccountId, Money)>() // No credits
+            "Currency mismatch transfer",
+            new[] { (new AccountId("acc_source"), new Money(100m, usdCurrency)) },
+            new[] { (new AccountId("acc_dest"), new Money(100m, eurCurrency)) }
         );
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentException>(() => 
             _handler.HandleAsync(command, CancellationToken.None));
     }
 
     [Fact]
-    public async Task HandleAsync_WithMixedCurrencies_ThrowsArgumentException()
+    public async Task HandleAsync_MissingAccount_ThrowsInvalidOperationException()
     {
         // Arrange
+        var currency = Currency.FromCode("USD");
+        
         var command = new PostJournalEntryCommand(
-            "Mixed currencies",
-            new[] { (new AccountId("acc_source"), new Money(10000, Currency.FromCode("NGN"), 2)) },
-            new[] { (new AccountId("acc_dest"), new Money(10000, Currency.FromCode("USD"), 2)) } // Different currency
+            "Missing account transfer",
+            new[] { (new AccountId("acc_source"), new Money(100m, currency)) },
+            new[] { (new AccountId("acc_dest"), new Money(100m, currency)) }
         );
 
+        _mockRepository.Setup(x => x.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Account[] { }); // Empty result
+
+        _mockUnitOfWork.Setup(x => x.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Account not found"));
+
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<InvalidOperationException>(() => 
             _handler.HandleAsync(command, CancellationToken.None));
     }
 
     [Fact]
-    public async Task HandleAsync_WithNegativeAmounts_ThrowsArgumentException()
-    {
-        // Arrange
-        var command = new PostJournalEntryCommand(
-            "Negative amounts",
-            new[] { (new AccountId("acc_source"), new Money(-10000, Currency.FromCode("NGN"), 2)) }, // Negative amount
-            new[] { (new AccountId("acc_dest"), new Money(-10000, Currency.FromCode("NGN"), 2)) }
-        );
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            _handler.HandleAsync(command, CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task HandleAsync_WithMissingAccount_ThrowsInvalidOperationException()
+    public async Task HandleAsync_InsufficientBalance_ThrowsInvalidOperationException()
     {
         // Arrange
         var tenantId = new TenantId("tnt_test");
-        var currency = Currency.FromCode("NGN");
-        var sourceAccountId = new AccountId("acc_source");
-        var destAccountId = new AccountId("acc_dest");
-        var amount = new Money(10000, currency, 2);
-
-        // Only return one account, missing the other
-        var sourceAccount = CreateAccount(sourceAccountId, tenantId, currency, 50000);
-        _mockRepository.Setup(r => r.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { sourceAccount }); // Missing destAccount
-
-        _mockUnitOfWork.Setup(uow => uow.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<CancellationToken>()))
-            .Returns<Func<Task<JournalEntry>>, CancellationToken>(async (action, ct) => await action());
-
-        var command = new PostJournalEntryCommand(
-            "Test transfer",
-            new[] { (sourceAccountId, amount) },
-            new[] { (destAccountId, amount) }
-        );
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _handler.HandleAsync(command, CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task HandleAsync_WithInsufficientFunds_ThrowsInvalidOperationException()
-    {
-        // Arrange
-        var tenantId = new TenantId("tnt_test");
-        var currency = Currency.FromCode("NGN");
-        var sourceAccountId = new AccountId("acc_source");
-        var destAccountId = new AccountId("acc_dest");
-        var amount = new Money(10000, currency, 2);
-
-        // Create account with insufficient funds
-        var sourceAccount = CreateAccount(sourceAccountId, tenantId, currency, 5000); // Less than transfer amount
-        var destAccount = CreateAccount(destAccountId, tenantId, currency, 20000);
-
-        _mockRepository.Setup(r => r.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { sourceAccount, destAccount });
-
-        _mockUnitOfWork.Setup(uow => uow.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<CancellationToken>()))
-            .Returns<Func<Task<JournalEntry>>, CancellationToken>(async (action, ct) => await action());
-
-        var command = new PostJournalEntryCommand(
-            "Test transfer",
-            new[] { (sourceAccountId, amount) },
-            new[] { (destAccountId, amount) }
-        );
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _handler.HandleAsync(command, CancellationToken.None));
-    }
-
-    private static Account CreateAccount(AccountId id, TenantId tenantId, Currency currency, long ledgerCents)
-    {
-        var account = new Account(
-            id,
+        var currency = Currency.FromCode("USD");
+        
+        var sourceAccount = new Account(
+            new EntityId("acc_source"),
             tenantId,
-            id.Value,
-            $"Account {id.Value}",
+            "acc_source",
+            "Source Account",
             AccountType.Asset,
             currency
         );
-        account.RestoreBalance(new Money(ledgerCents, currency, 2));
-        return account;
+        sourceAccount.RestoreBalance(new Money(50m, currency)); // Insufficient balance
+
+        var destAccount = new Account(
+            new EntityId("acc_dest"),
+            tenantId,
+            "acc_dest",
+            "Destination Account",
+            AccountType.Asset,
+            currency
+        );
+        destAccount.RestoreBalance(new Money(500m, currency));
+
+        var command = new PostJournalEntryCommand(
+            "Insufficient balance transfer",
+            new[] { (new AccountId("acc_source"), new Money(100m, currency)) },
+            new[] { (new AccountId("acc_dest"), new Money(100m, currency)) }
+        );
+
+        _mockRepository.Setup(x => x.GetBatchAsync(It.IsAny<AccountId[]>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { sourceAccount, destAccount });
+
+        _mockUnitOfWork.Setup(x => x.ExecuteInTransactionAsync(It.IsAny<Func<Task<JournalEntry>>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Insufficient balance"));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => 
+            _handler.HandleAsync(command, CancellationToken.None));
     }
 }

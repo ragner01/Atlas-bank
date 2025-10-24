@@ -5,23 +5,117 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
 
 env:
-  DOTNET_VERSION: '8.0.x'
-  CONTAINER_REGISTRY: 'atlasbank.azurecr.io'
-  RESOURCE_GROUP: 'atlasbank-rg'
-  AKS_CLUSTER: 'atlasbank-aks'
+  DOTNET_VERSION: '9.0.x'
+  DOCKER_REGISTRY: 'ghcr.io'
+  IMAGE_NAME: 'atlasbank'
 
 jobs:
-  # Build and Test
-  build-and-test:
+  # =============================================
+  # CODE QUALITY AND SECURITY SCANNING
+  # =============================================
+  security-scan:
+    name: Security Scan
     runs-on: ubuntu-latest
-    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          queries: security-and-quality
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build solution
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Run security audit
+        run: |
+          dotnet list package --vulnerable --include-transitive
+          dotnet audit --fail-on-warnings
+
+  # =============================================
+  # UNIT TESTS AND CODE COVERAGE
+  # =============================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-project:
+          - tests/Atlas.Ledger.Tests.Unit
+          - gateways/Atlas.ApiGateway.Tests
+          - tests/Atlas.Risk.Features.Tests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build solution
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run tests
+        run: |
+          dotnet test ${{ matrix.test-project }} \
+            --no-build \
+            --configuration Release \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./coverage \
+            --logger trx \
+            --logger "console;verbosity=normal"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.test-project }}
+          path: ${{ matrix.test-project }}/TestResults/
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.test-project }}
+          path: ./coverage
+
+  # =============================================
+  # INTEGRATION TESTS
+  # =============================================
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
           POSTGRES_DB: atlas_test
         options: >-
           --health-cmd pg_isready
@@ -31,254 +125,276 @@ jobs:
         ports:
           - 5432:5432
 
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-    - name: Cache NuGet packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.nuget/packages
-        key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-        restore-keys: |
-          ${{ runner.os }}-nuget-
+      - name: Restore dependencies
+        run: dotnet restore
 
-    - name: Restore dependencies
-      run: dotnet restore
+      - name: Build solution
+        run: dotnet build --no-restore --configuration Release
 
-    - name: Build solution
-      run: dotnet build --no-restore --configuration Release
+      - name: Run database migrations
+        run: |
+          dotnet run --project src/Ledger/Atlas.Ledger.Api --no-build --configuration Release -- --migrate
+        env:
+          ConnectionStrings__Ledger: "Host=localhost;Port=5432;Database=atlas_test;Username=postgres;Password=postgres"
+          ConnectionStrings__Redis: "localhost:6379"
 
-    - name: Run unit tests
-      run: dotnet test --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage"
+      - name: Run integration tests
+        run: |
+          # Start services in background
+          docker-compose -f infrastructure/docker/docker-compose.yml up -d postgres redis redpanda
+          
+          # Wait for services to be ready
+          sleep 30
+          
+          # Run integration tests
+          dotnet test tests/Atlas.Integration.Tests --no-build --configuration Release
+        env:
+          ConnectionStrings__Ledger: "Host=localhost;Port=5432;Database=atlas_test;Username=postgres;Password=postgres"
+          ConnectionStrings__Redis: "localhost:6379"
+          KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
 
-    - name: Security scan
-      run: dotnet list package --vulnerable --include-transitive
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f infrastructure/docker/docker-compose.yml down
 
-    - name: Upload test results
-      uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: test-results
-        path: '**/TestResults/**/*'
-
-  # Docker Build and Push
-  build-and-push:
-    needs: build-and-test
+  # =============================================
+  # MULTI-STAGE DOCKER BUILDS
+  # =============================================
+  build-images:
+    name: Build Docker Images
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    
+    needs: [security-scan, test]
     strategy:
       matrix:
-        service: [ledger, payments, aml-worker, gateway]
-    
+        service:
+          - ledger
+          - payments
+          - loans
+          - amlworker
+          - gateway
+          - backoffice
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Login to Azure Container Registry
-      uses: azure/docker-login@v1
-      with:
-        login-server: ${{ env.CONTAINER_REGISTRY }}
-        username: ${{ secrets.ACR_USERNAME }}
-        password: ${{ secrets.ACR_PASSWORD }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Build and push Docker image
-      run: |
-        docker build -t ${{ env.CONTAINER_REGISTRY }}/${{ matrix.service }}:${{ github.sha }} \
-                     -t ${{ env.CONTAINER_REGISTRY }}/${{ matrix.service }}:latest \
-                     -f src/Services/Atlas.${{ matrix.service }}/Dockerfile .
-        docker push ${{ env.CONTAINER_REGISTRY }}/${{ matrix.service }}:${{ github.sha }}
-        docker push ${{ env.CONTAINER_REGISTRY }}/${{ matrix.service }}:latest
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-  # Deploy to Staging
-  deploy-staging:
-    needs: build-and-push
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service == 'ledger' && 'src/Services/Atlas.Ledger/Dockerfile' || 
+                 matrix.service == 'payments' && 'src/Services/Atlas.Payments/Dockerfile' ||
+                 matrix.service == 'loans' && 'src/Loans/Atlas.Loans.Api/Dockerfile' ||
+                 matrix.service == 'amlworker' && 'src/KycAml/Atlas.KycAml.Worker/Dockerfile' ||
+                 matrix.service == 'gateway' && 'gateways/Atlas.ApiGateway/Dockerfile' ||
+                 matrix.service == 'backoffice' && 'src/Backoffice/Atlas.Backoffice.Api/Dockerfile' }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # =============================================
+  # PERFORMANCE TESTING
+  # =============================================
+  performance-test:
+    name: Performance Tests
     runs-on: ubuntu-latest
+    needs: [build-images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        run: |
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start test environment
+        run: |
+          docker-compose -f infrastructure/docker/docker-compose.yml up -d
+          sleep 60  # Wait for services to be ready
+
+      - name: Run performance tests
+        run: |
+          k6 run infrastructure/devops/k6/transfer-5k-rps.js
+          k6 run infrastructure/devops/k6/balance-read-10k-rps.js
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f infrastructure/docker/docker-compose.yml down
+
+  # =============================================
+  # DEPLOYMENT
+  # =============================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images, integration-test]
     if: github.ref == 'refs/heads/develop'
     environment: staging
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
 
-    - name: Get AKS credentials
-      run: |
-        az aks get-credentials --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER }}-staging
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Deploy to staging
-      run: |
-        # Update image tags
-        sed -i "s|image: .*|image: ${{ env.CONTAINER_REGISTRY }}/ledger:${{ github.sha }}|g" infrastructure/k8s/deployments/ledger-deployment.yaml
-        sed -i "s|image: .*|image: ${{ env.CONTAINER_REGISTRY }}/payments:${{ github.sha }}|g" infrastructure/k8s/deployments/payments-deployment.yaml
-        sed -i "s|image: .*|image: ${{ env.CONTAINER_REGISTRY }}/aml-worker:${{ github.sha }}|g" infrastructure/k8s/deployments/aml-worker-deployment.yaml
-        
-        # Apply configurations
-        kubectl apply -f infrastructure/k8s/namespace.yaml
-        kubectl apply -f infrastructure/k8s/configmaps/
-        kubectl apply -f infrastructure/k8s/secrets/
-        kubectl apply -f infrastructure/k8s/deployments/
-        kubectl apply -f infrastructure/k8s/services/
-        
-        # Wait for rollout
-        kubectl rollout status deployment/ledger-service -n atlasbank-staging --timeout=300s
-        kubectl rollout status deployment/payments-service -n atlasbank-staging --timeout=300s
-        kubectl rollout status deployment/aml-worker -n atlasbank-staging --timeout=300s
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AKS_CLUSTER_NAME }}
 
-    - name: Run integration tests
-      run: |
-        # Wait for services to be ready
-        kubectl wait --for=condition=ready pod -l app=ledger-service -n atlasbank-staging --timeout=300s
-        kubectl wait --for=condition=ready pod -l app=payments-service -n atlasbank-staging --timeout=300s
-        
-        # Run integration tests
-        dotnet test tests/Integration/ --configuration Release --logger trx --results-directory TestResults
+      - name: Deploy to staging
+        run: |
+          # Update image tags in Kubernetes manifests
+          sed -i "s|image: .*|image: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/ledger:${{ github.sha }}|g" infrastructure/k8s/ledger/deployment.yaml
+          sed -i "s|image: .*|image: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/payments:${{ github.sha }}|g" infrastructure/k8s/payments/deployment.yaml
+          
+          # Apply Kubernetes manifests
+          kubectl apply -f infrastructure/k8s/ --namespace=atlasbank-staging
 
-    - name: Upload integration test results
-      uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: integration-test-results
-        path: 'TestResults/**/*'
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/ledger-api --namespace=atlasbank-staging
+          kubectl rollout status deployment/payments-api --namespace=atlasbank-staging
 
-  # Deploy to Production
+      - name: Run smoke tests
+        run: |
+          # Wait for services to be ready
+          sleep 30
+          
+          # Run smoke tests against staging
+          curl -f http://staging.atlasbank.com/health || exit 1
+
   deploy-production:
-    needs: [build-and-push, deploy-staging]
+    name: Deploy to Production
     runs-on: ubuntu-latest
+    needs: [build-images, integration-test, performance-test]
     if: github.ref == 'refs/heads/main'
     environment: production
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
 
-    - name: Get AKS credentials
-      run: |
-        az aks get-credentials --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER }}
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Deploy to production
-      run: |
-        # Update image tags
-        sed -i "s|image: .*|image: ${{ env.CONTAINER_REGISTRY }}/ledger:${{ github.sha }}|g" infrastructure/k8s/deployments/ledger-deployment.yaml
-        sed -i "s|image: .*|image: ${{ env.CONTAINER_REGISTRY }}/payments:${{ github.sha }}|g" infrastructure/k8s/deployments/payments-deployment.yaml
-        sed -i "s|image: .*|image: ${{ env.CONTAINER_REGISTRY }}/aml-worker:${{ github.sha }}|g" infrastructure/k8s/deployments/aml-worker-deployment.yaml
-        
-        # Apply configurations
-        kubectl apply -f infrastructure/k8s/namespace.yaml
-        kubectl apply -f infrastructure/k8s/configmaps/
-        kubectl apply -f infrastructure/k8s/secrets/
-        kubectl apply -f infrastructure/k8s/deployments/
-        kubectl apply -f infrastructure/k8s/services/
-        kubectl apply -f infrastructure/k8s/ingress/
-        
-        # Wait for rollout
-        kubectl rollout status deployment/ledger-service -n atlasbank --timeout=300s
-        kubectl rollout status deployment/payments-service -n atlasbank --timeout=300s
-        kubectl rollout status deployment/aml-worker -n atlasbank --timeout=300s
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} --name ${{ secrets.AKS_CLUSTER_NAME }}
 
-    - name: Verify deployment
-      run: |
-        # Check pod status
-        kubectl get pods -n atlasbank
-        
-        # Check service health
-        kubectl get services -n atlasbank
-        
-        # Run health checks
-        kubectl run health-check --rm -i --restart=Never --image=curlimages/curl:latest -- \
-          curl -f http://ledger-service.atlasbank.svc.cluster.local:5181/health
-        kubectl run health-check --rm -i --restart=Never --image=curlimages/curl:latest -- \
-          curl -f http://payments-service.atlasbank.svc.cluster.local:5191/health
+      - name: Deploy to production
+        run: |
+          # Update image tags in Kubernetes manifests
+          sed -i "s|image: .*|image: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/ledger:${{ github.sha }}|g" infrastructure/k8s/ledger/deployment.yaml
+          sed -i "s|image: .*|image: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/payments:${{ github.sha }}|g" infrastructure/k8s/payments/deployment.yaml
+          
+          # Apply Kubernetes manifests
+          kubectl apply -f infrastructure/k8s/ --namespace=atlasbank-production
 
-    - name: Notify deployment
-      if: always()
-      run: |
-        if [ "${{ job.status }}" == "success" ]; then
-          echo "✅ Production deployment successful!"
-        else
-          echo "❌ Production deployment failed!"
-        fi
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/ledger-api --namespace=atlasbank-production
+          kubectl rollout status deployment/payments-api --namespace=atlasbank-production
 
-  # Security Scan
-  security-scan:
+      - name: Run production smoke tests
+        run: |
+          # Wait for services to be ready
+          sleep 60
+          
+          # Run smoke tests against production
+          curl -f https://api.atlasbank.com/health || exit 1
+
+  # =============================================
+  # NOTIFICATIONS
+  # =============================================
+  notify:
+    name: Notify
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-
-    - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
-      with:
-        sarif_file: 'trivy-results.sarif'
-
-    - name: Run CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
-      with:
-        languages: csharp
-
-  # Performance Test
-  performance-test:
-    needs: deploy-staging
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/develop'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup k6
-      run: |
-        sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-        echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-        sudo apt-get update
-        sudo apt-get install k6
-
-    - name: Run performance tests
-      run: |
-        k6 run tests/load/payments-load-test.js
-        k6 run tests/load/ledger-load-test.js
-
-    - name: Upload performance results
-      uses: actions/upload-artifact@v3
-      with:
-        name: performance-results
-        path: 'performance-results.json'
-
-  # Cleanup
-  cleanup:
-    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
     if: always()
-    needs: [deploy-production]
-    
+
     steps:
-    - name: Cleanup old images
-      run: |
-        # Keep only last 10 images
-        az acr repository show-tags --name atlasbank --repository ledger --orderby time_desc --query '[10:].name' -o tsv | xargs -I {} az acr repository delete --name atlasbank --image ledger:{} --yes
-        az acr repository show-tags --name atlasbank --repository payments --orderby time_desc --query '[10:].name' -o tsv | xargs -I {} az acr repository delete --name atlasbank --image payments:{} --yes
-        az acr repository show-tags --name atlasbank --repository aml-worker --orderby time_desc --query '[10:].name' -o tsv | xargs -I {} az acr repository delete --name atlasbank --image aml-worker:{} --yes
+      - name: Notify on success
+        if: ${{ needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success' }}
+        run: |
+          echo "✅ Deployment successful!"
+          # Add Slack/Teams notification here
+
+      - name: Notify on failure
+        if: ${{ needs.deploy-staging.result == 'failure' || needs.deploy-production.result == 'failure' }}
+        run: |
+          echo "❌ Deployment failed!"
+          # Add Slack/Teams notification here

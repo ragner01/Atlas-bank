@@ -1,14 +1,30 @@
 {
   "Kestrel": {
     "Endpoints": {
-      "Http": { "Url": "http://0.0.0.0:5080" }
+      "Http": { 
+        "Url": "http://0.0.0.0:5080",
+        "Protocols": "Http1AndHttp2"
+      },
+      "Https": {
+        "Url": "https://0.0.0.0:5443",
+        "Protocols": "Http1AndHttp2",
+        "Certificate": {
+          "Path": "/app/certs/tls.crt",
+          "KeyPath": "/app/certs/tls.key"
+        }
+      }
     },
     "AddServerHeader": false,
     "Limits": {
       "MaxConcurrentConnections": 100000,
       "MaxConcurrentUpgradedConnections": 100000,
       "KeepAliveTimeout": "00:02:00",
-      "MaxRequestBodySize": 0
+      "MaxRequestBodySize": 10485760,
+      "MaxRequestHeadersTotalSize": 32768,
+      "MaxRequestLineSize": 8192
+    },
+    "HttpsDefaults": {
+      "SslProtocols": ["Tls12", "Tls13"]
     }
   }
 }

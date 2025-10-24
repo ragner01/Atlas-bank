@@ -1,39 +1,57 @@
-# Dockerfile for Atlas.Payments service
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
-WORKDIR /app
-EXPOSE 80
-EXPOSE 443
-
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+# Multi-stage build for Atlas Payments API
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
-# Copy project files
-COPY ["src/BuildingBlocks/Atlas.Common/Atlas.Common.csproj", "src/BuildingBlocks/Atlas.Common/"]
-COPY ["src/BuildingBlocks/Atlas.Messaging/Atlas.Messaging.csproj", "src/BuildingBlocks/Atlas.Messaging/"]
-COPY ["src/BuildingBlocks/Atlas.Persistence/Atlas.Persistence.csproj", "src/BuildingBlocks/Atlas.Persistence/"]
-COPY ["src/BuildingBlocks/Atlas.Security/Atlas.Security.csproj", "src/BuildingBlocks/Atlas.Security/"]
-COPY ["src/BuildingBlocks/Atlas.Observability/Atlas.Observability.csproj", "src/BuildingBlocks/Atlas.Observability/"]
-COPY ["src/Services/Atlas.Payments/Atlas.Payments.csproj", "src/Services/Atlas.Payments/"]
+# Copy project files for better layer caching
+COPY src/BuildingBlocks/Atlas.Common/Atlas.Common.csproj src/BuildingBlocks/Atlas.Common/
+COPY src/BuildingBlocks/Atlas.Messaging/Atlas.Messaging.csproj src/BuildingBlocks/Atlas.Messaging/
+COPY src/BuildingBlocks/Atlas.Persistence/Atlas.Persistence.csproj src/BuildingBlocks/Atlas.Persistence/
+COPY src/BuildingBlocks/Atlas.Security/Atlas.Security.csproj src/BuildingBlocks/Atlas.Security/
+COPY src/BuildingBlocks/Atlas.Observability/Atlas.Observability.csproj src/BuildingBlocks/Atlas.Observability/
+COPY src/BuildingBlocks/Atlas.Resilience/Atlas.Resilience.csproj src/BuildingBlocks/Atlas.Resilience/
+COPY src/BuildingBlocks/Atlas.Database/Atlas.Database.csproj src/BuildingBlocks/Atlas.Database/
+COPY src/Services/Atlas.Payments/Atlas.Payments.csproj src/Services/Atlas.Payments/
 
 # Restore dependencies
-RUN dotnet restore "src/Services/Atlas.Payments/Atlas.Payments.csproj"
+RUN dotnet restore src/Services/Atlas.Payments/Atlas.Payments.csproj
 
 # Copy source code
 COPY . .
 
 # Build the application
-WORKDIR "/src/src/Services/Atlas.Payments"
-RUN dotnet build "Atlas.Payments.csproj" -c Release -o /app/build
+WORKDIR /src/src/Services/Atlas.Payments
+RUN dotnet build Atlas.Payments.csproj -c Release -o /app/build --no-restore
 
-FROM build AS publish
-RUN dotnet publish "Atlas.Payments.csproj" -c Release -o /app/publish /p:UseAppHost=false
+# Publish the application
+RUN dotnet publish Atlas.Payments.csproj -c Release -o /app/publish --no-build /p:UseAppHost=false
 
-FROM base AS final
+# Runtime stage
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
-COPY --from=publish /app/publish .
 
-# Create non-root user
-RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
-USER appuser
+# Create non-root user for security
+RUN groupadd -r paymentsuser && useradd -r -g paymentsuser paymentsuser
 
+# Copy published application
+COPY --from=build /app/publish .
+
+# Set proper permissions
+RUN chown -R paymentsuser:paymentsuser /app
+
+# Switch to non-root user
+USER paymentsuser
+
+# Set environment variables
+ENV ASPNETCORE_URLS=http://+:5191
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
+# Expose port
+EXPOSE 5191
+
+# Health check without curl
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD dotnet /app/Atlas.Payments.dll --health-check || exit 1
+
+# Entry point
 ENTRYPOINT ["dotnet", "Atlas.Payments.dll"]

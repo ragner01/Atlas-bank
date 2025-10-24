@@ -44,12 +44,12 @@ public class GlobalExceptionHandlingMiddleware
 
         var response = exception switch
         {
-            ArgumentException => ErrorResponse.ValidationError(
-                "Invalid request parameters", 
-                new[] { exception.Message }, 
-                correlationId),
             ArgumentNullException => ErrorResponse.ValidationError(
                 "Required parameter is missing", 
+                new[] { exception.Message }, 
+                correlationId),
+            ArgumentException => ErrorResponse.ValidationError(
+                "Invalid request parameters", 
                 new[] { exception.Message }, 
                 correlationId),
             InvalidOperationException => ErrorResponse.BusinessError(
@@ -79,7 +79,7 @@ public class GlobalExceptionHandlingMiddleware
 
         context.Response.StatusCode = exception switch
         {
-            ArgumentException or ArgumentNullException => (int)HttpStatusCode.BadRequest,
+            ArgumentNullException or ArgumentException => (int)HttpStatusCode.BadRequest,
             InvalidOperationException => (int)HttpStatusCode.BadRequest,
             UnauthorizedAccessException => (int)HttpStatusCode.Unauthorized,
             NotImplementedException => (int)HttpStatusCode.NotImplemented,

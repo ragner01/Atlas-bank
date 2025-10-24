@@ -1,0 +1,20 @@
+{
+  "name": "regionA-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres_regionA",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "atlas_a",
+    "database.server.name": "regionA",
+    "table.include.list": "public.outbox",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_regionA",
+    "publication.name": "dbz_publication_regionA",
+    "transforms": "route",
+    "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+    "transforms.route.regex": "regionA.public.outbox",
+    "transforms.route.replacement": "regionA.public.outbox"
+  }
+}

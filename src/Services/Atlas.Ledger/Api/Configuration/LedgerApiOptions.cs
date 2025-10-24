@@ -3,10 +3,13 @@ using Microsoft.Extensions.Options;
 namespace Atlas.Ledger.Api.Configuration;
 
 /// <summary>
-/// Configuration options for the Ledger API
+/// Configuration options for the Ledger API service
 /// </summary>
 public class LedgerApiOptions
 {
+    /// <summary>
+    /// The configuration section name for Ledger API options
+    /// </summary>
     public const string SectionName = "LedgerApi";
 
     /// <summary>
@@ -84,10 +87,16 @@ public class SecurityOptions
 }
 
 /// <summary>
-/// Validates LedgerApiOptions configuration
+/// Validator for LedgerApiOptions configuration
 /// </summary>
 public class LedgerApiOptionsValidator : IValidateOptions<LedgerApiOptions>
 {
+    /// <summary>
+    /// Validates the LedgerApiOptions configuration
+    /// </summary>
+    /// <param name="name">The configuration section name</param>
+    /// <param name="options">The options to validate</param>
+    /// <returns>Validation result</returns>
     public ValidateOptionsResult Validate(string? name, LedgerApiOptions options)
     {
         var failures = new List<string>();

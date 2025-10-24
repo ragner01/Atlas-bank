@@ -1,0 +1,103 @@
+# Multi-stage Dockerfile for AtlasBank API Gateway
+# Optimized for production with security scanning and minimal attack surface
+
+# =============================================
+# STAGE 1: Build Stage
+# =============================================
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+
+# Install security updates and build dependencies
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    openssl \
+    && rm -rf /var/cache/apk/*
+
+# Set working directory
+WORKDIR /src
+
+# Copy project files for dependency restoration
+COPY gateways/Atlas.ApiGateway/Atlas.ApiGateway.csproj ./Atlas.ApiGateway/
+
+# Restore dependencies
+RUN dotnet restore Atlas.ApiGateway/Atlas.ApiGateway.csproj
+
+# Copy source code
+COPY gateways/Atlas.ApiGateway/ ./
+
+# Build the application
+RUN dotnet build Atlas.ApiGateway.csproj \
+    --configuration Release \
+    --no-restore \
+    --verbosity minimal
+
+# Publish the application
+RUN dotnet publish Atlas.ApiGateway.csproj \
+    --configuration Release \
+    --no-build \
+    --output /app/publish \
+    --verbosity minimal
+
+# =============================================
+# STAGE 2: Security Scan Stage
+# =============================================
+FROM aquasec/trivy:latest AS security-scan
+
+# Copy the published application for scanning
+COPY --from=build /app/publish /scan/app
+
+# Run security scan
+RUN trivy fs --security-checks vuln,config --exit-code 0 --format json /scan/app > /scan/trivy-report.json
+
+# =============================================
+# STAGE 3: Runtime Stage
+# =============================================
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS runtime
+
+# Install security updates and runtime dependencies
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    curl \
+    openssl \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S atlasbank && \
+    adduser -u 1001 -S atlasbank -G atlasbank
+
+# Set working directory
+WORKDIR /app
+
+# Copy published application
+COPY --from=build /app/publish .
+
+# Copy security scan results
+COPY --from=security-scan /scan/trivy-report.json /app/security-report.json
+
+# Change ownership to non-root user
+RUN chown -R atlasbank:atlasbank /app
+
+# Switch to non-root user
+USER atlasbank
+
+# Expose ports
+EXPOSE 8080 8081
+
+# Set environment variables
+ENV ASPNETCORE_URLS=http://+:8080;https://+:8081 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
+    DOTNET_RUNNING_IN_CONTAINER=true
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Set resource limits (handled by Kubernetes/container orchestrator)
+# CPU: 250m, Memory: 256Mi
+
+# Start the application
+ENTRYPOINT ["dotnet", "Atlas.ApiGateway.dll"]

@@ -143,7 +143,9 @@ public sealed class FastTransferHandler
 
         // Validate account IDs are different
         if (src.Equals(dst, StringComparison.OrdinalIgnoreCase))
-            errors.Add("Source and destination accounts must be different");
+        {
+            errors.Add($"Source and destination accounts must be different: src='{src}', dst='{dst}'");
+        }
 
         // Validate amount
         if (amountMinor < MinAmountMinor)

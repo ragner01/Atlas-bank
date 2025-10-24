@@ -1,0 +1,64 @@
+  # Simulate two regions with separate Postgres and Ledger APIs
+  postgres_regionA:
+    image: postgres:16
+    command: >
+      postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
+               -c shared_buffers=512MB -c max_connections=300
+    environment: { POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: atlas_a }
+    ports: ["5434:5432"]
+
+  postgres_regionB:
+    image: postgres:16
+    command: >
+      postgres -c wal_level=logical -c max_wal_senders=10 -c max_replication_slots=10
+               -c shared_buffers=512MB -c max_connections=300
+    environment: { POSTGRES_PASSWORD: postgres, POSTGRES_USER: postgres, POSTGRES_DB: atlas_b }
+    ports: ["5435:5432"]
+
+  ledgerapi_regionA:
+    build: ../../src/Services/Atlas.Ledger
+    environment:
+      - ASPNETCORE_URLS=http://+:6181
+      - REGION_ID=regionA
+      - ConnectionStrings__Ledger=Host=postgres_regionA;Port=5432;Database=atlas_a;Username=postgres;Password=postgres
+      - Shards__tnt_demo=Host=postgres_regionA;Port=5432;Database=atlas_a;Username=postgres;Password=postgres
+    depends_on: [postgres_regionA]
+    ports: ["6181:6181"]
+
+  ledgerapi_regionB:
+    build: ../../src/Services/Atlas.Ledger
+    environment:
+      - ASPNETCORE_URLS=http://+:7181
+      - REGION_ID=regionB
+      - ConnectionStrings__Ledger=Host=postgres_regionB;Port=5432;Database=atlas_b;Username=postgres;Password=postgres
+      - Shards__tnt_demo=Host=postgres_regionB;Port=5432;Database=atlas_b;Username=postgres;Password=postgres
+    depends_on: [postgres_regionB]
+    ports: ["7181:7181"]
+
+  connect:
+    image: confluentinc/cp-kafka-connect:latest
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: redpanda:9092
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: connect-cluster-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_INTERNAL_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_INTERNAL_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      CONNECT_LOG4J_LOGGERS: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
+    ports:
+      - "8083:8083"
+    depends_on:
+      - redpanda
+    volumes:
+      - ./debezium/connector-regionA.json:/tmp/connector-regionA.json
+      - ./debezium/connector-regionB.json:/tmp/connector-regionB.json

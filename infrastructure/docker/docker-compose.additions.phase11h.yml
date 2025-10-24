@@ -1,0 +1,26 @@
+  riskgraph:
+    build: ../../src/Risk/Atlas.Risk.Graph
+    environment:
+      - ASPNETCORE_URLS=http://+:5401
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASS=neo4j
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - TOPIC_LEDGER=ledger-events
+      - TOPIC_RISK=risk-events
+      - RISK_ONNX=/app/models/fraud-mini.onnx
+      - REDIS=redis:6379
+    depends_on: [neo4j, redpanda, redis]
+    ports: ["5401:5401"]
+    volumes:
+      - ../../models:/app/models:ro
+
+  paymentsapi:
+    environment:
+      - Services__RiskGrpc=http://riskgraph:5401
+      - KAFKA_BOOTSTRAP=redpanda:9092
+
+# Optional: preload blacklists in Redis for smoke (dev only)
+#   docker exec -it <redis_container> redis-cli SADD risk:blacklist:ip 1.2.3.4
+#   docker exec -it <redis_container> redis-cli SADD risk:blacklist:device dev-xyz
+#   docker exec -it <redis_container> redis-cli SADD risk:blacklist:merchant m-123

@@ -5,12 +5,21 @@ using Grpc.Core;
 
 namespace Atlas.Ledger.Api.Grpc;
 
+/// <summary>
+/// gRPC service implementation for Ledger operations
+/// </summary>
 public sealed class LedgerGrpcService : LedgerService.LedgerServiceBase
 {
     private readonly PostJournalEntryHandler _handler;
     private readonly ILedgerRepository _repo;
     private readonly ITenantContext _tenantContext;
 
+    /// <summary>
+    /// Initializes a new instance of the LedgerGrpcService
+    /// </summary>
+    /// <param name="h">The journal entry handler</param>
+    /// <param name="r">The ledger repository</param>
+    /// <param name="tenantContext">The tenant context</param>
     public LedgerGrpcService(PostJournalEntryHandler h, ILedgerRepository r, ITenantContext tenantContext)
     {
         _handler = h;
@@ -18,6 +27,12 @@ public sealed class LedgerGrpcService : LedgerService.LedgerServiceBase
         _tenantContext = tenantContext;
     }
 
+    /// <summary>
+    /// Posts a journal entry to the ledger
+    /// </summary>
+    /// <param name="request">The journal entry request</param>
+    /// <param name="context">The gRPC call context</param>
+    /// <returns>The response containing the journal entry ID</returns>
     public override async Task<PostEntryResponse> PostEntry(PostEntryRequest request, ServerCallContext context)
     {
         // Convert minor units to decimal value (minor units / 10^scale)
@@ -41,6 +56,12 @@ public sealed class LedgerGrpcService : LedgerService.LedgerServiceBase
         };
     }
 
+    /// <summary>
+    /// Gets the balance for a specific account
+    /// </summary>
+    /// <param name="request">The balance request</param>
+    /// <param name="context">The gRPC call context</param>
+    /// <returns>The response containing the account balance</returns>
     public override async Task<GetBalanceResponse> GetBalance(GetBalanceRequest request, ServerCallContext context)
     {
         var acc = await _repo.GetAsync(new AccountId(request.AccountId), context.CancellationToken);

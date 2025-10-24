@@ -1,0 +1,25 @@
+syntax = "proto3";
+package risk.v1;
+option csharp_namespace = "Atlas.Contracts.Risk.V1";
+
+message ScoreRequest {
+  string tenant_id = 1;
+  string source_account_id = 2;
+  string destination_account_id = 3;
+  int64 minor = 4;
+  string currency = 5;
+  string device_id = 6;   // optional
+  string ip = 7;          // optional
+  string customer_id = 8; // optional
+  string merchant_id = 9; // optional  <--- NEW
+}
+
+message ScoreResponse {
+  double risk_score = 1;      // 0..1
+  string decision = 2;        // ALLOW / REVIEW / BLOCK
+  string reason = 3;          // top contributing factor
+}
+
+service RiskService {
+  rpc Score (ScoreRequest) returns (ScoreResponse);
+}

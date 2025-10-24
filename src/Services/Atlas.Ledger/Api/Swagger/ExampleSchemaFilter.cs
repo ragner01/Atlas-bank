@@ -2,6 +2,8 @@ using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
+using Atlas.Ledger.Api.Models;
+using Atlas.Ledger.App;
 
 namespace Atlas.Ledger.Api.Swagger;
 

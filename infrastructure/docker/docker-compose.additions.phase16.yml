@@ -1,0 +1,29 @@
+services:
+  fees:
+    build: ../../src/Acquiring/Atlas.Fees
+    environment: [ "ASPNETCORE_URLS=http://+:5701", "FEES_MDR_BP=170", "FEES_FIXED_MINOR=100" ]
+    ports: [ "5701:5701" ]
+
+  settlement:
+    build: ../../src/Acquiring/Atlas.Settlement
+    environment:
+      - LEDGER_CONN=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+      - BLOB_CONN=UseDevelopmentStorage=true
+      - SETL_INTERVAL_MIN=60
+    depends_on: [postgres]
+
+  recon:
+    build: ../../src/Acquiring/Atlas.Recon
+    environment: [ "ASPNETCORE_URLS=http://+:5702", "BLOB_CONN=UseDevelopmentStorage=true" ]
+    ports: [ "5702:5702" ]
+
+  webhooks:
+    build: ../../src/Acquiring/Atlas.Webhooks
+    environment: [ "ASPNETCORE_URLS=http://+:5703", "REDIS=redis:6379" ]
+    ports: [ "5703:5703" ]
+    depends_on: [redis]
+
+  paymentsapi:
+    environment:
+      - Services__FeesBase=http://fees:5701
+      - Services__WebhooksBase=http://webhooks:5703

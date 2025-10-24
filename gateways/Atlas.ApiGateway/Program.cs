@@ -1,36 +1,197 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.StackExchangeRedis;
+using Microsoft.Extensions.Options;
+using StackExchange.Redis;
+using System.Threading.RateLimiting;
 using Yarp.ReverseProxy;
+using Atlas.ApiGateway.Middleware;
+using Atlas.ApiGateway.Configuration;
 
-var b = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(args);
+
+// Configure and validate options
+builder.Services.Configure<ApiGatewayOptions>(builder.Configuration.GetSection(ApiGatewayOptions.SectionName));
+builder.Services.AddSingleton<IValidateOptions<ApiGatewayOptions>, ApiGatewayOptionsValidator>();
 
 // Enable Kestrel performance configuration
-var kb = new ConfigurationBuilder().AddJsonFile("kestrel.fast.json", optional: true).Build();
-b.WebHost.UseKestrel().UseConfiguration(kb);
+var kestrelConfig = new ConfigurationBuilder()
+    .AddJsonFile("kestrel.fast.json", optional: true)
+    .Build();
+builder.WebHost.UseKestrel().UseConfiguration(kestrelConfig);
 
-b.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(o =>
-    {
-        o.Authority = b.Configuration["Authentication:Authority"];
-        o.Audience  = b.Configuration["Authentication:Audience"];
-        o.RequireHttpsMetadata = bool.Parse(b.Configuration["Authentication:RequireHttpsMetadata"] ?? "true");
-        o.TokenValidationParameters.ValidTypes = new[] { "at+jwt", "JWT" };
-    });
-
-b.Services.AddAuthorization(options =>
+// Add Redis for rate limiting
+builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.AddPolicy("ScopeAccountsRead", p => p.RequireClaim("scope", "accounts.read"));
-    options.AddPolicy("ScopePaymentsWrite", p => p.RequireClaim("scope", "payments.write"));
-    options.AddPolicy("ScopeAmlRead", p => p.RequireClaim("scope", "aml.read"));
+    options.Configuration = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
 });
 
-b.Services.AddReverseProxy().LoadFromConfig(b.Configuration.GetSection("ReverseProxy"));
+// Add rate limiting
+builder.Services.AddRateLimiter(options =>
+{
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User?.Identity?.Name ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = int.Parse(builder.Configuration["RateLimiting:PermitPerMinute"] ?? "120"),
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 10
+            }));
 
-var app = b.Build();
+    options.AddPolicy("Strict", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User?.Identity?.Name ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 2
+            }));
+});
 
+// Add authentication
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        var authOptions = builder.Configuration.GetSection("ApiGateway:Authentication");
+        options.Authority = authOptions["Authority"];
+        options.Audience = authOptions["Audience"];
+        options.RequireHttpsMetadata = bool.Parse(authOptions["RequireHttpsMetadata"] ?? "true");
+        options.TokenValidationParameters.ValidTypes = new[] { "at+jwt", "JWT" };
+        
+        // Enhanced security options
+        options.TokenValidationParameters.ValidateIssuer = true;
+        options.TokenValidationParameters.ValidateAudience = true;
+        options.TokenValidationParameters.ValidateLifetime = true;
+        options.TokenValidationParameters.ValidateIssuerSigningKey = true;
+        options.TokenValidationParameters.ClockSkew = TimeSpan.FromMinutes(5);
+    });
+
+// Add authorization
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ScopeAccountsRead", policy => 
+        policy.RequireClaim("scope", "accounts.read"));
+    options.AddPolicy("ScopePaymentsWrite", policy => 
+        policy.RequireClaim("scope", "payments.write"));
+    options.AddPolicy("ScopeAmlRead", policy => 
+        policy.RequireClaim("scope", "aml.read"));
+    options.AddPolicy("ScopeLoansRead", policy => 
+        policy.RequireClaim("scope", "loans.read"));
+    options.AddPolicy("ScopeLoansWrite", policy => 
+        policy.RequireClaim("scope", "loans.write"));
+});
+
+// Add reverse proxy
+builder.Services.AddReverseProxy()
+    .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
+
+// Add health checks
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
+
+// Add CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AtlasBank", policy =>
+    {
+        policy.WithOrigins(builder.Configuration.GetSection("ApiGateway:Cors:AllowedOrigins").Get<string[]>() ?? new[] { "https://localhost:3000" })
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+});
+
+var app = builder.Build();
+
+// Configure pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+else
+{
+    app.UseExceptionHandler("/error");
+    app.UseHsts();
+}
+
+// Add global exception handling
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
+
+// Security headers middleware
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["X-XSS-Protection"] = "1; mode=block";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()";
+    
+    // Content Security Policy
+    context.Response.Headers["Content-Security-Policy"] = 
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';";
+    
+    await next();
+});
+
+// Remove server header
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Remove("Server");
+    await next();
+});
+
+// Enable HTTPS redirection
+app.UseHttpsRedirection();
+
+// Enable CORS
+app.UseCors("AtlasBank");
+
+// Enable rate limiting
+app.UseRateLimiter();
+
+// Authentication and authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+// Health check endpoint
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var response = new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(entry => new
+            {
+                name = entry.Key,
+                status = entry.Value.Status.ToString(),
+                duration = entry.Value.Duration.TotalMilliseconds
+            }),
+            duration = report.TotalDuration.TotalMilliseconds
+        };
+        await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(response));
+    }
+});
+
+// Error handling endpoint
+app.MapGet("/error", () => Results.Problem(
+    title: "An error occurred",
+    detail: "Please contact support if this problem persists",
+    statusCode: 500
+));
+
+// Reverse proxy
 app.MapReverseProxy();
+
+// Graceful shutdown
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    Console.WriteLine("API Gateway is shutting down gracefully...");
+});
 
 app.Run();

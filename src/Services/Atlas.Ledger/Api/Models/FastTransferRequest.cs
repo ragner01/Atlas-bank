@@ -59,4 +59,12 @@ public class FastTransferRequest
     [RegularExpression(@"^[a-zA-Z0-9_-]+$", ErrorMessage = "Tenant ID must contain only alphanumeric characters, underscores, and hyphens")]
     [Display(Description = "Tenant identifier for multi-tenant operations")]
     public string TenantId { get; set; } = default!;
+
+    /// <summary>
+    /// Idempotency key to prevent duplicate transfers
+    /// </summary>
+    [Required(ErrorMessage = "Idempotency key is required.")]
+    [StringLength(100, MinimumLength = 1, ErrorMessage = "Idempotency key must be between 1 and 100 characters.")]
+    [Display(Description = "Unique key to prevent duplicate transfers")]
+    public string IdempotencyKey { get; set; } = default!;
 }

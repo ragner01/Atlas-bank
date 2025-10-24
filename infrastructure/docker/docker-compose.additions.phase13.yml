@@ -1,0 +1,25 @@
+  consistency-wm:
+    build: ../../src/Consistency/Atlas.Consistency
+    environment:
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - REDIS=redis:6379
+    depends_on: [redpanda, redis]
+
+  autoheal:
+    build: ../../src/Ledger/Atlas.Ledger.AutoHeal
+    environment:
+      - REDIS=redis:6379
+      - HEAL_RATE_SECONDS=10
+      - HEAL_MAX_ABS_MINOR=200000   # 2,000.00 max per heal action
+      - HEAL_SUSPENSE_ACCOUNT=suspense
+      - HEAL_TENANT=tnt_demo
+      - HEAL_REGION_TARGET=regionA
+      - HEAL_REGION_URL=http://ledgerapi_regionA:6181
+      - HEAL_REGION_URL_B=http://ledgerapi_regionB:7181
+    depends_on: [redis, ledgerapi_regionA, ledgerapi_regionB]
+
+# expose Redis to ledgerapi services if needed for /consistency/wait endpoints
+#  ledgerapi_regionA:
+#    environment: [ "REDIS=redis:6379" ]
+#  ledgerapi_regionB:
+#    environment: [ "REDIS=redis:6379" ]
