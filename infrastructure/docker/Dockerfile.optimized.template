@@ -1,0 +1,75 @@
+# Optimized Dockerfile Template for AtlasBank Services
+# This template implements best practices for Docker builds:
+# 1. Multi-stage builds for smaller images
+# 2. Layer caching optimization
+# 3. Security hardening
+# 4. Non-root user execution
+# 5. Health checks
+
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+WORKDIR /src
+
+# Install build dependencies
+RUN apk update && apk upgrade && apk add --no-cache ca-certificates
+
+# Copy project files first for better layer caching
+COPY ["src/BuildingBlocks/Atlas.Common/Atlas.Common.csproj", "src/BuildingBlocks/Atlas.Common/"]
+COPY ["src/BuildingBlocks/Atlas.Messaging/Atlas.Messaging.csproj", "src/BuildingBlocks/Atlas.Messaging/"]
+COPY ["src/BuildingBlocks/Atlas.Persistence/Atlas.Persistence.csproj", "src/BuildingBlocks/Atlas.Persistence/"]
+COPY ["src/BuildingBlocks/Atlas.Security/Atlas.Security.csproj", "src/BuildingBlocks/Atlas.Security/"]
+COPY ["src/BuildingBlocks/Atlas.Observability/Atlas.Observability.csproj", "src/BuildingBlocks/Atlas.Observability/"]
+COPY ["src/BuildingBlocks/Atlas.Resilience/Atlas.Resilience.csproj", "src/BuildingBlocks/Atlas.Resilience/"]
+COPY ["src/BuildingBlocks/Atlas.Database/Atlas.Database.csproj", "src/BuildingBlocks/Atlas.Database/"]
+
+# Copy service-specific project files
+COPY ["src/Services/Atlas.Ledger/Atlas.Ledger.csproj", "src/Services/Atlas.Ledger/"]
+COPY ["src/Services/Atlas.Payments/Atlas.Payments.csproj", "src/Services/Atlas.Payments/"]
+
+# Restore dependencies (this layer will be cached if project files don't change)
+RUN dotnet restore "src/Services/Atlas.Ledger/Atlas.Ledger.csproj" --runtime linux-musl-x64
+
+# Copy source code (this layer will be rebuilt when source changes)
+COPY ["src/BuildingBlocks/", "src/BuildingBlocks/"]
+COPY ["src/Services/Atlas.Ledger/", "src/Services/Atlas.Ledger/"]
+
+# Build the application
+RUN dotnet build "src/Services/Atlas.Ledger/Atlas.Ledger.csproj" -c Release -o /app/build
+
+# Publish stage
+FROM build AS publish
+RUN dotnet publish "src/Services/Atlas.Ledger/Atlas.Ledger.csproj" -c Release -o /app/publish \
+    --self-contained false \
+    /p:PublishSingleFile=false \
+    /p:PublishTrimmed=false \
+    /p:EnableCompressionInSingleFile=false
+
+# Runtime stage - MINIMAL SECURITY HARDENED
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS runtime
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk update && apk upgrade && \
+    apk add --no-cache ca-certificates tzdata wget && \
+    rm -rf /var/cache/apk/*
+
+# Create a non-root user
+RUN addgroup -g 1010 -S appuser && \
+    adduser -u 1010 -S appuser -G appuser
+
+# Copy published application
+COPY --from=publish /app/publish .
+
+# Set file permissions (as root before switching user)
+RUN chown -R appuser:appuser /app && \
+    chmod -R 755 /app
+
+# Switch to non-root user
+USER appuser
+
+# Health check using wget (no curl dependency)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8080}/health || exit 1
+
+# Entry point
+ENTRYPOINT ["dotnet", "Atlas.Ledger.dll"]

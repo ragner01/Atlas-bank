@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # Phase 23: Analytics Services
+  lake-etl:
+    build: ../../src/Analytics/Atlas.Lake.Etl
+    environment:
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - TOPIC_LEDGER=ledger-events
+      - BLOB_CONN=UseDevelopmentStorage=true
+      - LAKE_CONTAINER=lake
+      - LAKE_BATCH_ROWS=5000
+      - LAKE_BATCH_SECONDS=15
+    # depends_on: [redpanda]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  metrics-ch:
+    build: ../../src/Analytics/Atlas.Metrics.CH
+    environment:
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - TOPIC_LEDGER=ledger-events
+      - CLICKHOUSE_HTTP=http://clickhouse:8123
+      - CH_BATCH_ROWS=5000
+      - CH_BATCH_SECONDS=5
+    # depends_on: [redpanda]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  featurestore:
+    build: ../../src/Analytics/Atlas.FeatureStore
+    environment:
+      - ASPNETCORE_URLS=http://+:5831
+      - REDIS=redis:6379
+      - CLICKHOUSE_CONN=Host=clickhouse;Port=9000;Username=default;Password=
+    ports: ["5831:5831"]
+    # depends_on: [redis]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5831/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'

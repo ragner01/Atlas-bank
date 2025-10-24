@@ -6,6 +6,7 @@ b.Services.AddDbContext<CasesDbContext>(o => o.UseNpgsql(b.Configuration.GetConn
 var app = b.Build();
 
 app.MapGet("/health", () => Results.Ok());
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 app.MapGet("/aml/cases", async (CasesDbContext db, string? status, string? tenant) =>
 {
     var q = db.Cases.AsQueryable();

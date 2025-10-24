@@ -1,12 +1,9 @@
 using Serilog;
 using Serilog.Events;
-using Serilog.Sinks.SystemConsole;
-using Serilog.Sinks.File;
-using Serilog.Enrichers.Environment;
-using Serilog.Enrichers.Process;
-using Serilog.Enrichers.Thread;
 using Serilog.Formatting.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
 
 namespace AtlasBank.Common.Logging;
@@ -29,10 +26,6 @@ public static class LoggingConfiguration
             .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
             .MinimumLevel.Override("System", LogEventLevel.Warning)
             .Enrich.FromLogContext()
-            .Enrich.WithEnvironmentName()
-            .Enrich.WithMachineName()
-            .Enrich.WithProcessId()
-            .Enrich.WithThreadId()
             .Enrich.WithProperty("Service", serviceName)
             .Enrich.WithProperty("Version", GetVersion())
             .Enrich.WithProperty("Environment", Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production")
@@ -231,7 +224,7 @@ public static class LoggingExtensions
     /// <summary>
     /// Log performance metrics
     /// </summary>
-    public static void LogPerformanceMetric(this ILogger logger, string operation, long elapsedMs, object additionalData = null)
+    public static void LogPerformanceMetric(this ILogger logger, string operation, long elapsedMs, object? additionalData = null)
     {
         logger.Information("Performance: {Operation} completed in {ElapsedMs}ms {@AdditionalData}", 
             operation, elapsedMs, additionalData);

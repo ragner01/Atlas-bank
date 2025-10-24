@@ -72,6 +72,7 @@ try
     });
 
     app.MapGet("/health", () => Results.Ok(new { ok = true, service = "Atlas.Aml", timestamp = DateTime.UtcNow }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
     // POST /aml/sanctions/load — bulk load sanctions IDs (Redis SET)
     app.MapPost("/aml/sanctions/load", async ([FromServices] IConnectionMultiplexer mux, [FromBody] SanctionsLoadReq req, CancellationToken ct) =>

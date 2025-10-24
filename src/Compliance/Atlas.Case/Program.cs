@@ -72,6 +72,7 @@ try
     });
 
     app.MapGet("/health", () => Results.Ok(new { ok = true, service = "Atlas.Case", timestamp = DateTime.UtcNow }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
     // POST /cases — create new AML case
     app.MapPost("/cases", async ([FromServices] NpgsqlDataSource ds, [FromBody] CreateCaseReq req, CancellationToken ct) =>

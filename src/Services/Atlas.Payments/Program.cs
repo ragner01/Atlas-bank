@@ -180,6 +180,35 @@ app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks
     }
 });
 
+// Add HEAD method support for health checks
+app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
+
+// Simple authentication endpoint for demo purposes
+app.MapPost("/auth/login", async (LoginRequest req, ILogger<Program> logger) => {
+    // Demo authentication - in production this would validate against a proper auth service
+    if (req.Msisdn == "2348100000001" && req.Pin == "1234")
+    {
+        // Generate a simple JWT token (demo only)
+        var token = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"demo_token_{req.Msisdn}_{DateTime.UtcNow:yyyyMMddHHmmss}"));
+        
+        logger.LogInformation("User {Msisdn} logged in successfully", req.Msisdn);
+        
+        return Results.Ok(new {
+            token = token,
+            user = new {
+                msisdn = req.Msisdn,
+                firstName = "John",
+                lastName = "Doe",
+                email = "john.doe@example.com"
+            },
+            expiresAt = DateTime.UtcNow.AddHours(1)
+        });
+    }
+    
+    logger.LogWarning("Failed login attempt for MSISDN {Msisdn}", req.Msisdn);
+    return Results.Problem("Invalid credentials", statusCode: 401);
+});
+
 app.MapPost("/payments/transfers", async (HttpRequest http, TransferRequest req, IIdempotencyStore idem, LedgerService.LedgerServiceClient ledger, CancellationToken ct) => {
     var key = http.Headers["Idempotency-Key"].FirstOrDefault();
     if (string.IsNullOrWhiteSpace(key)) return Results.Problem("Missing Idempotency-Key", statusCode: 400);
@@ -303,6 +332,7 @@ public class CorsOptions
 
 record TransferRequest(string SourceAccountId, string DestinationAccountId, long Minor, string Currency, string Narration);
 record AuthDto(bool approved, string auth_code, string rrn, string network, string last4);
+record LoginRequest(string Msisdn, string Pin);
 
 // Middleware classes (same as Ledger API)
 public class SecurityHeadersMiddleware

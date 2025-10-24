@@ -69,6 +69,7 @@ try
 
     // Health check endpoint
     app.MapGet("/health", () => Results.Ok(new { status = "ok", timestamp = DateTime.UtcNow, service = "Atlas.Limits" }))
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
         .WithName("HealthCheck")
         .WithTags("Health")
         .WithSummary("Health check endpoint")

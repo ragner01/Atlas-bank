@@ -13,6 +13,7 @@ b.Services.AddSingleton(new NpgsqlDataSourceBuilder(Environment.GetEnvironmentVa
 
 var app = b.Build();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 // 1️⃣ Realtime trust score (actors, merchants, users, devices)
 app.MapGet("/trust/score", async (

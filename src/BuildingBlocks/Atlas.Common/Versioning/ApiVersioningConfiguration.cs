@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc.Versioning;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
 using Microsoft.OpenApi.Models;
 using Swashbuckle.AspNetCore.SwaggerGen;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Builder;
 using System.Reflection;
 
 namespace AtlasBank.Common.Versioning;
@@ -186,31 +188,6 @@ public class ApiVersionDocumentFilter : IDocumentFilter
             swaggerDoc.Info.Version = apiVersion.ToString();
             swaggerDoc.Info.Title = $"AtlasBank API v{apiVersion}";
         }
-    }
-}
-
-/// <summary>
-/// API version attributes
-/// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true)]
-public class ApiVersionAttribute : ApiVersionAttribute
-{
-    public ApiVersionAttribute(int majorVersion, int minorVersion = 0) 
-        : base(majorVersion, minorVersion)
-    {
-    }
-}
-
-/// <summary>
-/// Deprecated API version attribute
-/// </summary>
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true)]
-public class DeprecatedApiVersionAttribute : ApiVersionAttribute
-{
-    public DeprecatedApiVersionAttribute(int majorVersion, int minorVersion = 0) 
-        : base(majorVersion, minorVersion)
-    {
-        Deprecated = true;
     }
 }
 

@@ -1,0 +1,29 @@
+# AtlasBank Console Frontend Service
+  console:
+    build:
+      context: ../../apps/frontend/atlas-console
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - VITE_PAYMENTS_API_URL=http://payments-api:5191
+      - VITE_LEDGER_API_URL=http://ledger-api:5190
+      - VITE_TRUST_API_URL=http://trust-portal:5802
+      - VITE_CARDS_API_URL=http://cards-vault:5192
+      - VITE_LOANS_API_URL=http://loans-api:5193
+      - VITE_AGENT_API_URL=http://agent-net:5621
+      - VITE_OFFLINE_API_URL=http://offline-q:5622
+    depends_on:
+      - payments-api
+      - ledger-api
+      - trust-portal
+    networks:
+      - atlasbank
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

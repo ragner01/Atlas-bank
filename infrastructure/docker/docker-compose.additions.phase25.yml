@@ -1,0 +1,44 @@
+services:
+  # Phase 25: Chaos Engineering & DR Drills
+  chaos-manager:
+    build: ../../src/Chaos/Atlas.Chaos.Manager
+    environment:
+      - ASPNETCORE_URLS=http://+:5951
+      - ConnectionStrings__Redis=redis:6379
+      - ASPNETCORE_ENVIRONMENT=Development
+    ports: 
+      - "5951:5951"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5951/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+  chaos-agent:
+    build: ../../src/Chaos/Atlas.Chaos.Agent
+    environment:
+      - ConnectionStrings__Redis=redis:6379
+      - SHADOW_SRC=ledgerapi:6181
+      - SHADOW_DST=httpbin.org:80
+      - SHADOW_RATE=0.05
+      - REDIS_KEY_PREFIX=shadow
+      - ASPNETCORE_ENVIRONMENT=Development
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'

@@ -34,5 +34,6 @@ b.Services.AddSingleton<IScorer>(sp =>
 b.Services.AddGrpc();
 var app = b.Build();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 app.MapGrpcService<RiskGrpcService>();
 app.Run();

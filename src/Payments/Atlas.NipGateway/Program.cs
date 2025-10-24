@@ -85,6 +85,7 @@ try
     });
 
     app.MapGet("/health", () => Results.Ok(new { 
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
         ok = true, 
         service = "Atlas.NipGateway", 
         timestamp = DateTime.UtcNow 

@@ -4,6 +4,7 @@ var b = WebApplication.CreateBuilder(args);
 var app = b.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 // Simulate network auth with simple rules: decline high amounts or expired
 app.MapPost("/net/auth", ([FromBody] NetAuth req) =>

@@ -1,6 +1,8 @@
 using Azure.Storage.Blobs;
 using Npgsql;
 using System.Text;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace Atlas.Settlement;
 
@@ -8,12 +10,25 @@ public sealed class SettlementWorker : BackgroundService
 {
     private readonly ILogger<SettlementWorker> _log;
     private readonly BlobServiceClient _blob;
-    public SettlementWorker(ILogger<SettlementWorker> log, BlobServiceClient blob) { _log = log; _blob = blob; }
+    private readonly IConfiguration _configuration;
+    private readonly SettlementOptions _options;
+
+    public SettlementWorker(
+        ILogger<SettlementWorker> log, 
+        BlobServiceClient blob,
+        IConfiguration configuration,
+        IOptions<SettlementOptions> options)
+    { 
+        _log = log; 
+        _blob = blob; 
+        _configuration = configuration;
+        _options = options.Value;
+    }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) => Task.Run(() => Loop(stoppingToken));
     private async Task Loop(CancellationToken ct)
     {
-        var runEvery = TimeSpan.FromMinutes(int.Parse(Environment.GetEnvironmentVariable("SETL_INTERVAL_MIN") ?? "60"));
+        var runEvery = TimeSpan.FromMinutes(_options.IntervalMinutes);
         while (!ct.IsCancellationRequested)
         {
             try { await RunOnce(ct); }
@@ -24,8 +39,12 @@ public sealed class SettlementWorker : BackgroundService
 
     private async Task RunOnce(CancellationToken ct)
     {
-        string cs = Environment.GetEnvironmentVariable("LEDGER_CONN") ?? "Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres";
-        await using var conn = new NpgsqlConnection(cs); await conn.OpenAsync(ct);
+        // Use configuration instead of hardcoded credentials
+        var connectionString = _configuration.GetConnectionString("Ledger") 
+            ?? throw new InvalidOperationException("Ledger connection string not configured");
+        
+        await using var conn = new NpgsqlConnection(connectionString); 
+        await conn.OpenAsync(ct);
 
         // Select unsettled merchant credits in last window
         var from = DateTimeOffset.UtcNow.Date.AddDays(-1);
@@ -53,9 +72,9 @@ public sealed class SettlementWorker : BackgroundService
         }
         if (rows.Count == 0) { return; }
 
-        // Basic fee calc: call Fees API? Keep inline for now: 1.7% + 1.00
-        decimal mdrBp = decimal.Parse(Environment.GetEnvironmentVariable("FEES_MDR_BP") ?? "170");
-        long fixedMinor = long.Parse(Environment.GetEnvironmentVariable("FEES_FIXED_MINOR") ?? "100");
+        // Basic fee calc: use configuration instead of environment variables
+        decimal mdrBp = _options.MdrBasisPoints;
+        long fixedMinor = _options.FixedFeeMinor;
 
         var csv = new StringBuilder();
         csv.AppendLine("tenant,merchant,gross_minor,fees_minor,net_minor,tx_count,from,to");
@@ -81,10 +100,11 @@ public sealed class SettlementWorker : BackgroundService
         }
 
         // Upload bank payout file
-        var cont = _blob.GetBlobContainerClient("settlement");
+        var cont = _blob.GetBlobContainerClient(_options.BlobContainerName);
         await cont.CreateIfNotExistsAsync(cancellationToken: ct);
         var name = $"payout_{to:yyyyMMdd}.csv";
         await cont.UploadBlobAsync(name, new BinaryData(csv.ToString()), ct);
-        _ = name; // returned to logs only
+        
+        _log.LogInformation("Settlement completed: {FileName} with {RowCount} merchants", name, rows.Count);
     }
 }

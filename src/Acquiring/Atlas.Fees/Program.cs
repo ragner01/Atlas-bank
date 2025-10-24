@@ -6,6 +6,7 @@ var b = WebApplication.CreateBuilder(args);
 var app = b.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status="ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 // GET /fees/quote?merchantId=m-123&minor=150000&currency=NGN&network=VISA&mcc=5999
 app.MapGet("/fees/quote", (

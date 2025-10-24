@@ -1,0 +1,82 @@
+services:
+  ussdgw:
+    build: ../../src/Channels/Atlas.Ussd.Gateway
+    environment:
+      - ASPNETCORE_URLS=http://+:${PORT:-5620}
+      - PORT=${PORT:-5620}
+      - REDIS=redis:6379
+      - LEDGER_BASE=http://ledgerapi:6181
+      - PAYMENTS_BASE=http://paymentsapi:5191
+      - AGENT_BASE=http://agentnet:5621
+    ports: ["${PORT:-5620}:${PORT:-5620}"]
+    networks:
+      - docker_atlas-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${PORT:-5620}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  agentnet:
+    build: ../../src/Agents/Atlas.Agent.Network
+    environment:
+      - ASPNETCORE_URLS=http://+:${PORT:-5621}
+      - PORT=${PORT:-5621}
+      - LEDGER_CONN=Host=postgres;Database=atlas_bank;Username=atlas;Password=atlas123
+      - REDIS=redis:6379
+    ports: ["${PORT:-5621}:${PORT:-5621}"]
+    networks:
+      - docker_atlas-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${PORT:-5621}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  offlineq:
+    build: ../../src/Offline/Atlas.Offline.Queue
+    environment:
+      - ASPNETCORE_URLS=http://+:${PORT:-5622}
+      - PORT=${PORT:-5622}
+      - REDIS=redis:6379
+      - LEDGER_CONN=Host=postgres;Database=atlas_bank;Username=atlas;Password=atlas123
+      - OFFLINE_SECRET=dev-secret
+    ports: ["${PORT:-5622}:${PORT:-5622}"]
+    networks:
+      - docker_atlas-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${PORT:-5622}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+networks:
+  docker_atlas-network:
+    external: true

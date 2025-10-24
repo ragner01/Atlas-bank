@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Atlas Mobile",
+    "slug": "atlas-mobile",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "scheme": "atlas",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": { 
+      "image": "./assets/splash.png", 
+      "resizeMode": "contain", 
+      "backgroundColor": "#ffffff" 
+    },
+    "ios": { 
+      "supportsTablet": false,
+      "bundleIdentifier": "com.atlasbank.mobile",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Use Face ID to authenticate securely"
+      }
+    },
+    "android": { 
+      "adaptiveIcon": { 
+        "foregroundImage": "./assets/adaptive-icon.png", 
+        "backgroundColor": "#ffffff" 
+      },
+      "package": "com.atlasbank.mobile",
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ]
+    },
+    "web": { 
+      "bundler": "metro" 
+    },
+    "extra": {}
+  }
+}

@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # Phase 26: Realtime Service
+  realtime:
+    build: ../../src/Realtime/Atlas.Realtime
+    environment:
+      - ASPNETCORE_URLS=http://+:5851
+      - ASPNETCORE_ENVIRONMENT=Production
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - TOPIC_BALANCE_UPDATES=balance-updates
+    ports: 
+      - "5851:5851"
+    depends_on: 
+      - redpanda
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5851/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Enhanced Payments API with load shedding
+  paymentsapi:
+    environment:
+      - REDIS=redis:6379
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - LEDGER_BASE=http://ledgerapi:6181
+      - LS_RATE_PER_SEC=400
+      - LS_BURST=800
+      - TOPIC_BALANCE_UPDATES=balance-updates
+    depends_on:
+      - redis
+      - redpanda
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Enhanced Ledger API with caching
+  ledgerapi:
+    environment:
+      - REDIS=redis:6379
+      - LEDGER_INTERNAL=http://ledgercore:6182
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Redis configuration for caching
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+volumes:
+  redis_data:

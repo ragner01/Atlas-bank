@@ -6,6 +6,7 @@ b.Services.AddSingleton(new BlobServiceClient(Environment.GetEnvironmentVariable
 var app = b.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status="ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 // POST /recon/network — upload a (simulated) scheme settlement CSV and mark matched/variance
 // CSV headers: rrn,minor,currency,merchant_id,result

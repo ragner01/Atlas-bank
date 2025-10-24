@@ -18,6 +18,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok());
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 app.MapPost("/loans/products", async (LoansDbContext db, LoanProduct input) =>
 {

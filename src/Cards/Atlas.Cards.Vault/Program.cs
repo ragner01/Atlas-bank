@@ -19,6 +19,7 @@ var app = b.Build();
 app.MapOpenApi();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 // Tokenize PAN (PCI zone). Returns PAN-less token to be used outside CDE.
 app.MapPost("/vault/tokenize", async ([FromServices] NpgsqlDataSource ds, [FromServices] CardCrypto crypto, [FromBody] TokenizeRequest req, CancellationToken ct) =>

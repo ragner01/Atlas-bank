@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using System.ComponentModel.DataAnnotations;
 
 namespace AtlasBank.Common.Configuration;
@@ -134,7 +136,7 @@ public class ServiceConfiguration : BaseConfiguration
 /// </summary>
 public class ConfigurationValidator<T> : IValidateOptions<T> where T : BaseConfiguration
 {
-    public ValidateOptionsResult Validate(string name, T options)
+    public ValidateOptionsResult Validate(string? name, T options)
     {
         try
         {

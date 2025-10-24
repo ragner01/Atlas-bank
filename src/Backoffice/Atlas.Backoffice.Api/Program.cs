@@ -19,6 +19,8 @@ app.UseRouting();
 app.MapControllers();
 
 app.MapGet("/", () => Results.Redirect("/health"));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "AtlasBank Backoffice" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 app.Run();

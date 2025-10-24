@@ -16,6 +16,12 @@ services:
       - ./infrastructure/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - atlas-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas_bank"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Redis Cache
   redis:
@@ -27,6 +33,12 @@ services:
       - redis_data:/data
     networks:
       - atlas-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Kafka Message Broker
   zookeeper:
@@ -104,6 +116,12 @@ services:
       - ./infrastructure/docker/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - atlas-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Jaeger for Tracing
   jaeger:

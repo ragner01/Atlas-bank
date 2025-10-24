@@ -9,6 +9,7 @@ b.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 var app = b.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status="ok" }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
 // Set secret per endpoint
 app.MapPost("/webhooks/secret", async (IConnectionMultiplexer mux, string endpoint, string secret) =>

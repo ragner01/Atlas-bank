@@ -78,6 +78,7 @@ try
     });
 
     app.MapGet("/health", () => Results.Ok(new { ok = true, service = "Atlas.Kyc", timestamp = DateTime.UtcNow }));
+    app.MapMethods("/health", new[] { "HEAD" }, () => Results.Ok());
 
     // POST /kyc/start — begins KYC flow (BVN/NIN + selfie liveness + PoA)
     app.MapPost("/kyc/start", async ([FromServices] NpgsqlDataSource ds, [FromBody] KycStart req, CancellationToken ct) =>
