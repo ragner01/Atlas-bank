@@ -46,3 +46,4 @@ select
   end as amount_category
 from tx_events
 where ts_ms > 0  -- Filter out invalid timestamps
+

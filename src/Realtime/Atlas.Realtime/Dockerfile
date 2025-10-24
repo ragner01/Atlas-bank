@@ -16,3 +16,4 @@ USER atlas
 
 EXPOSE 5851
 ENTRYPOINT ["dotnet", "Atlas.Realtime.dll"]
+

@@ -48,3 +48,4 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 
 # Run the application
 ENTRYPOINT ["dotnet", "Atlas.Metrics.CH.dll"]
+

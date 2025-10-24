@@ -446,3 +446,4 @@ eas update --branch beta
 - [ ] Network efficiency
 
 This comprehensive guide will help you test the AtlasBank mobile app on physical devices with confidence!
+

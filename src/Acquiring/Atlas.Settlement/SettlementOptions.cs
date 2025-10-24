@@ -45,3 +45,4 @@ public class SettlementOptions
     /// </summary>
     public bool EnableAuditLogging { get; set; } = true;
 }
+

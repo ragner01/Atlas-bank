@@ -480,3 +480,4 @@ public class QueryPerformanceMetric
     public int RowsAffected { get; set; }
     public DateTime Timestamp { get; set; }
 }
+

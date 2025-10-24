@@ -25,3 +25,4 @@ select
 from {{ ref('stg_tx_events') }}
 group by 1, 2, 3, 4, 5, 6, 7, 8, 9
 order by dt desc, tenant, currency
+

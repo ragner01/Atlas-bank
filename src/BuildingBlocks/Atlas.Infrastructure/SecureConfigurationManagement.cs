@@ -366,3 +366,4 @@ public static class ConfigurationSecurityHelper
             key.Contains(sensitive, StringComparison.OrdinalIgnoreCase));
     }
 }
+

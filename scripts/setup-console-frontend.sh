@@ -115,3 +115,4 @@ echo "📚 For detailed documentation, see:"
 echo "   apps/frontend/atlas-console/README.md"
 echo ""
 echo "🚀 Ready to develop! Run 'make console-dev' to begin."
+

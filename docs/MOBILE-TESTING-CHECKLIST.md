@@ -183,3 +183,4 @@ eas submit --platform android
 - [ ] Authentication flow is secure
 
 This checklist ensures comprehensive testing of the AtlasBank mobile app on physical devices!
+

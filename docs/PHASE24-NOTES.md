@@ -246,3 +246,4 @@ EXPO_PUBLIC_AGENT_BASE=http://localhost:5621
 - `@atlasbank/sdk`: AtlasBank TypeScript SDK
 
 This implementation provides a production-ready foundation for AtlasBank's mobile and SDK ecosystem with comprehensive security, resilience, and offline-first capabilities.
+

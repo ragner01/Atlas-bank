@@ -118,3 +118,4 @@ echo "📚 For detailed testing instructions, see:"
 echo "   docs/PHYSICAL-DEVICE-TESTING.md"
 echo ""
 echo "🚀 Ready to test! Run 'npm run start' to begin."
+

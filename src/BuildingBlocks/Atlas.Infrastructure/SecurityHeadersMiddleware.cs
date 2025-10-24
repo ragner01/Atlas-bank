@@ -103,3 +103,4 @@ public class SecurityHeadersOptions
     public bool RemoveServerHeader { get; set; } = true;
     public Dictionary<string, string> CustomHeaders { get; set; } = new();
 }
+

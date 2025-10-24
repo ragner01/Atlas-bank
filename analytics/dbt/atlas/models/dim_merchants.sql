@@ -87,3 +87,4 @@ select
   end as risk_indicator
 from merchant_aggregates
 order by total_gross_minor desc
+

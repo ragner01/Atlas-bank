@@ -22,3 +22,4 @@ public class UssdGatewayOptionsValidator : IValidateOptions<UssdGatewayOptions>
         return ValidateOptionsResult.Success;
     }
 }
+

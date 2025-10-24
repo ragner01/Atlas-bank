@@ -22,3 +22,4 @@ public class SettlementOptionsValidator : IValidateOptions<SettlementOptions>
         return ValidateOptionsResult.Success;
     }
 }
+

@@ -118,3 +118,4 @@ app.MapGet("/ledger/cache/stats", async (IConnectionMultiplexer mux) =>
         return Results.Problem("Failed to get cache statistics", statusCode: 500);
     }
 });
+

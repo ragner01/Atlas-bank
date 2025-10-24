@@ -179,3 +179,4 @@ public class GlobalExceptionMiddleware
         await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(response));
     }
 }
+

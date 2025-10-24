@@ -26,3 +26,4 @@ USER chaos
 COPY --from=build /app/publish .
 
 ENTRYPOINT ["dotnet", "Atlas.Chaos.Agent.dll"]
+

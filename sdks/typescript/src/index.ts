@@ -441,3 +441,4 @@ export const defaultConfig: Partial<AtlasConfig> = {
     backoff: 2,
   },
 };
+
