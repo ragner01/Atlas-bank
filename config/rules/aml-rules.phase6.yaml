@@ -1,0 +1,12 @@
+# Extends Phase 4 velocity rules: adds remote feature lookup via Feature Service
+velocity:
+  - id: velocity_ngn_stepup
+    field: amount
+    windowSeconds: 120
+    thresholdMinor: 120000000  # 1,200,000.00 NGN
+    currency: NGN
+    action: STEP_UP
+features:
+  featureServiceBase: "http://riskfeatures:5301"
+  # which subject to check: source, dest, or customerId (for later)
+  subjectSelector: "source"

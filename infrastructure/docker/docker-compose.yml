@@ -193,9 +193,17 @@ services:
   gateway:
     build: 
       context: ../../
-      dockerfile: src/Gateways/Atlas.ApiGateway/Dockerfile
-    environment: ["ASPNETCORE_URLS=http://+:5080"]
-    depends_on: [ledgerapi, paymentsapi]
+      dockerfile: gateways/Atlas.ApiGateway/Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:5080
+      - Authentication__Authority=https://login.microsoftonline.com/<tenant-id>/v2.0
+      - Authentication__Audience=api://atlas-public
+      - Authentication__RequireHttpsMetadata=true
+      - RateLimiting__PermitPerMinute=120
+      - RateLimiting__Redis=redis:6379
+    volumes:
+      - ../../gateways/Atlas.ApiGateway/appsettings.oauth.rate.json:/app/appsettings.json:ro
+    depends_on: [ledgerapi, paymentsapi, kycamlapi, redis]
     ports: ["5080:5080"]
 
   amlworker:
@@ -204,13 +212,14 @@ services:
       dockerfile: src/KycAml/Atlas.KycAml.Worker/Dockerfile
     environment:
       - KAFKA_BOOTSTRAP=redpanda:9092
-      - Rules__Path=/app/config/rules/aml-rules.yaml
+      - Rules__Path=/app/config/rules/aml-rules.phase6.yaml
       - Topics__LedgerEvents=ledger-events
       - ConnectionStrings__Cases=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
       - CASES_API=http://kycamlapi:5201
+      - FEATURES_API=http://riskfeatures:5301
     volumes:
       - ../../config/rules:/app/config/rules:ro
-    depends_on: [redpanda, postgres]
+    depends_on: [redpanda, postgres, riskfeatures]
 
   kycamlapi:
     build: 
@@ -231,6 +240,16 @@ services:
       - CASES_API=http://kycamlapi:5201
     depends_on: [kycamlapi]
     ports: ["5210:5210"]
+
+  riskfeatures:
+    build: 
+      context: ../../
+      dockerfile: src/Risk/Atlas.Risk.Features/Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:5301
+      - CLICKHOUSE_CONN=Host=clickhouse;Port=8123;Database=default;User=default;Password=
+    depends_on: [clickhouse]
+    ports: ["5301:5301"]
 
 volumes:
   postgres_data:

@@ -13,12 +13,13 @@ public sealed class Worker : BackgroundService
     private readonly RuleSet _rules;
     private readonly IConsumer<string, string> _consumer;
     private readonly IInbox _inbox;
+    private readonly IFeatureClient _features;
 
-    public Worker(ILogger<Worker> log, IRiskRuleEngine eng, IConfiguration cfg, CasesDbContext db)
+    public Worker(ILogger<Worker> log, IRiskRuleEngine eng, IConfiguration cfg, CasesDbContext db, IFeatureClient features)
     {
-        _log = log; _engine = eng;
-        var yaml = File.ReadAllText(cfg["Rules:Path"] ?? "config/rules/aml-rules.yaml");
-        _rules = RiskRuleEngine.LoadFromYaml(yaml);
+        _log = log; _engine = eng; _features = features;
+        var yamlPath = cfg["Rules:Path"] ?? "config/rules/aml-rules.phase6.yaml";
+        _rules = RiskRuleEngine.LoadFromYaml(File.ReadAllText(yamlPath));
 
         var conf = new ConsumerConfig
         {
@@ -46,37 +47,53 @@ public sealed class Worker : BackgroundService
             var messageId = cr.Message.Key ?? Guid.NewGuid().ToString();
             if (_inbox.HasProcessedAsync("aml-worker", messageId, ct).Result) continue;
 
-            var (minor, currency) = ParseAmounts(cr.Message.Value);
+            var (minor, currency, source, dest, tenant) = ParseEvent(cr.Message.Value);
             bucket.Add(minor);
 
-            MaybeEval(ref bucket, ref lastFlush, ct, currency);
+            // Subject selection based on rules config (default: source)
+            var subject = (_rules.Features?.SubjectSelector?.ToLowerInvariant()) switch
+            {
+                "dest" => dest,
+                _ => source
+            };
+
+            MaybeEvalWithFeatures(ref bucket, ref lastFlush, ct, tenant, subject, currency).GetAwaiter().GetResult();
             _inbox.MarkProcessedAsync("aml-worker", messageId, ct).GetAwaiter().GetResult();
         }
     }
 
-    private void MaybeEval(ref List<long> bucket, ref DateTimeOffset lastFlush, CancellationToken ct, string currency = "NGN")
+    private async Task MaybeEvalWithFeatures(ref List<long> bucket, ref DateTimeOffset lastFlush, CancellationToken ct, string tenant, string subject, string currency = "NGN")
     {
         if ((DateTimeOffset.UtcNow - lastFlush).TotalSeconds < 5) return;
-        var (hit, action, reason) = _engine.Evaluate(_rules, bucket, currency);
+        var local = _engine.EvaluateLocal(_rules, bucket, currency);
+        var feature = await _engine.EvaluateWithFeaturesAsync(_rules, tenant, subject, currency, _features, ct);
+        var hit = local.hit || feature.hit;
+        var action = feature.hit ? feature.action : local.action;
+        var reason = feature.hit ? feature.reason : local.reason;
+
         if (hit)
         {
             try
             {
                 using var http = new HttpClient { BaseAddress = new Uri(Environment.GetEnvironmentVariable("CASES_API") ?? "http://kycamlapi:5201") };
-                var payload = new AmlCase { TenantId = "tnt_demo", CustomerId = "cust_demo", Title = $"{action} AML velocity", Description = reason };
-                http.PostAsJsonAsync("/aml/cases", payload, ct).GetAwaiter().GetResult();
-                _log.LogWarning("AML Case created: {Title}", payload.Title);
+                var payload = new AmlCase { TenantId = tenant, CustomerId = "cust_demo", Title = $"{action} AML velocity", Description = reason };
+                await http.PostAsJsonAsync("/aml/cases", payload, ct);
+                _log.LogWarning("AML Case created via features: {Title} {Reason}", payload.Title, reason);
             }
             catch (Exception ex) { _log.LogError(ex, "Failed to emit AML case"); }
         }
         bucket.Clear(); lastFlush = DateTimeOffset.UtcNow;
     }
 
-    private static (long, string) ParseAmounts(string json)
+    private static (long minor, string currency, string source, string dest, string tenant) ParseEvent(string json)
     {
         using var doc = System.Text.Json.JsonDocument.Parse(json);
-        var minor = doc.RootElement.GetProperty("minor").GetInt64();
-        var ccy = doc.RootElement.GetProperty("currency").GetString() ?? "NGN";
-        return (minor, ccy);
+        var root = doc.RootElement;
+        long minor = root.GetProperty("minor").GetInt64();
+        string ccy = root.GetProperty("currency").GetString() ?? "NGN";
+        string source = root.TryGetProperty("source", out var s) ? s.GetString() ?? "" : "";
+        string dest = root.TryGetProperty("dest", out var d) ? d.GetString() ?? "" : "";
+        string tenant = root.TryGetProperty("tenant", out var t) ? t.GetString() ?? "tnt_demo" : "tnt_demo";
+        return (minor, ccy, source, dest, tenant);
     }
 }
