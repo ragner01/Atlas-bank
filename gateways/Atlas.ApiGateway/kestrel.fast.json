@@ -1,0 +1,14 @@
+{
+  "Kestrel": {
+    "Endpoints": {
+      "Http": { "Url": "http://0.0.0.0:5080" }
+    },
+    "AddServerHeader": false,
+    "Limits": {
+      "MaxConcurrentConnections": 100000,
+      "MaxConcurrentUpgradedConnections": 100000,
+      "KeepAliveTimeout": "00:02:00",
+      "MaxRequestBodySize": 0
+    }
+  }
+}

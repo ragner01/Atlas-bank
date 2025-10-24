@@ -167,16 +167,31 @@ services:
     networks:
       - atlas-network
 
+  ledgerreadmodel:
+    build: 
+      context: ../../
+      dockerfile: src/Ledger/Atlas.Ledger.ReadModel/Dockerfile
+    environment:
+      - REDIS=redis:6379
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - TOPIC_LEDGER=ledger-events
+    depends_on: [redis, redpanda]
+    networks:
+      - atlas-network
+
   ledgerapi:
     build: 
       context: ../../
       dockerfile: src/Services/Atlas.Ledger/Dockerfile
     environment:
       - ASPNETCORE_URLS=http://+:5181
-      - ConnectionStrings__Ledger=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+      - ConnectionStrings__Ledger=Host=atlas-postgres;Port=5432;Database=atlas_bank;Username=atlas;Password=atlas123
       - KAFKA_BOOTSTRAP=redpanda:9092
-    depends_on: [postgres, redpanda]
+      - REDIS=redis:6379
+    depends_on: [postgres, redpanda, redis]
     ports: ["5181:5181"]
+    networks:
+      - atlas-network
 
   paymentsapi:
     build: 
@@ -257,9 +272,11 @@ services:
       dockerfile: src/Loans/Atlas.Loans.Api/Dockerfile
     environment:
       - ASPNETCORE_URLS=http://+:5221
-      - ConnectionStrings__Loans=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+      - ConnectionStrings__Loans=Host=atlas-postgres;Port=5432;Database=atlas_bank;Username=atlas;Password=atlas123
     depends_on: [postgres]
     ports: ["5221:5221"]
+    networks:
+      - atlas-network
 
 volumes:
   postgres_data:

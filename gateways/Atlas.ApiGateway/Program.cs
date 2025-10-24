@@ -3,6 +3,10 @@ using Yarp.ReverseProxy;
 
 var b = WebApplication.CreateBuilder(args);
 
+// Enable Kestrel performance configuration
+var kb = new ConfigurationBuilder().AddJsonFile("kestrel.fast.json", optional: true).Build();
+b.WebHost.UseKestrel().UseConfiguration(kb);
+
 b.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {

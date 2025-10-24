@@ -33,7 +33,7 @@ public sealed class AccountRow
 { 
     public string Id { get; set; } = default!; 
     public string TenantId { get; set; } = default!; 
-    public string Currency { get; set; } = "NGN"; 
+    public string Currency { get; set; } = default!; // Remove hardcoded default
     public long LedgerCents { get; set; } 
 }
 

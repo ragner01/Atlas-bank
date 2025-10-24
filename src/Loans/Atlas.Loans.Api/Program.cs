@@ -9,6 +9,14 @@ b.Services.AddSingleton<RepaymentAllocator>();
 b.Services.AddSingleton<DelinquencyEngine>();
 
 var app = b.Build();
+
+// Ensure database is created
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<LoansDbContext>();
+    await db.Database.EnsureCreatedAsync();
+}
+
 app.MapGet("/health", () => Results.Ok());
 
 app.MapPost("/loans/products", async (LoansDbContext db, LoanProduct input) =>

@@ -1,0 +1,14 @@
+  ledgerreadmodel:
+    build: ../../src/Ledger/Atlas.Ledger.ReadModel
+    environment:
+      - REDIS=redis:6379
+      - KAFKA_BOOTSTRAP=redpanda:9092
+      - TOPIC_LEDGER=ledger-events
+    depends_on: [redis, redpanda]
+    networks:
+      - atlas-network
+
+# (Optional) expose Redis config to Ledger.Api container if running isolated:
+#  ledgerapi:
+#    environment:
+#      - REDIS=redis:6379
