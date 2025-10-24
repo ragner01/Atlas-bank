@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-cases
+  namespace: atlas-core
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: migrator
+        image: ghcr.io/yourorg/atlas.kycaml.api:${GITHUB_SHA}
+        command: ["dotnet","ef","database","update","--project","/app/src/KycAml/Atlas.KycAml.Api"]
+        env:
+        - name: ConnectionStrings__Cases
+          valueFrom:
+            secretKeyRef:
+              name: cases-conn
+              key: conn

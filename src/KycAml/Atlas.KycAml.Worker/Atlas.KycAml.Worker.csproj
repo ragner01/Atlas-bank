@@ -11,9 +11,13 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Risk\Atlas.Risk.Domain\Atlas.Risk.Domain.csproj" />
+    <ProjectReference Include="..\Atlas.KycAml.Domain\Atlas.KycAml.Domain.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Atlas.Messaging\Atlas.Messaging.csproj" />
   </ItemGroup>
 </Project>

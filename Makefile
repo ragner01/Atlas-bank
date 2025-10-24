@@ -21,7 +21,7 @@ up:
 	docker-compose -f infrastructure/docker/docker-compose.yml up -d postgres redis redpanda jaeger grafana
 	@echo "Waiting for infrastructure services to be ready..."
 	sleep 10
-	docker-compose -f infrastructure/docker/docker-compose.yml up -d ledgerapi paymentsapi gateway amlworker
+	docker-compose -f infrastructure/docker/docker-compose.yml up -d ledgerapi paymentsapi gateway amlworker kycamlapi backoffice
 	@echo "All services started. Gateway available at http://localhost:5080"
 
 # Stop all services
@@ -97,4 +97,5 @@ dev-setup: up
 	@echo "  Grafana:     http://localhost:3000 (admin/admin)"
 	@echo "  PostgreSQL:  localhost:5432"
 	@echo "  Redis:       localhost:6379"
-	@echo "  Redpanda:    localhost:9092"
+	@echo "  AML Cases API: http://localhost:5201"
+	@echo "  Backoffice UI: http://localhost:5210"

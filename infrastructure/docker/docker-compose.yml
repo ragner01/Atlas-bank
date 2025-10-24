@@ -206,9 +206,31 @@ services:
       - KAFKA_BOOTSTRAP=redpanda:9092
       - Rules__Path=/app/config/rules/aml-rules.yaml
       - Topics__LedgerEvents=ledger-events
+      - ConnectionStrings__Cases=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+      - CASES_API=http://kycamlapi:5201
     volumes:
       - ../../config/rules:/app/config/rules:ro
-    depends_on: [redpanda]
+    depends_on: [redpanda, postgres]
+
+  kycamlapi:
+    build: 
+      context: ../../
+      dockerfile: src/KycAml/Atlas.KycAml.Api/Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:5201
+      - ConnectionStrings__Cases=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+    depends_on: [postgres]
+    ports: ["5201:5201"]
+
+  backoffice:
+    build: 
+      context: ../../
+      dockerfile: src/Backoffice/Atlas.Backoffice.Api/Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:5210
+      - CASES_API=http://kycamlapi:5201
+    depends_on: [kycamlapi]
+    ports: ["5210:5210"]
 
 volumes:
   postgres_data:
