@@ -168,7 +168,9 @@ services:
       - atlas-network
 
   ledgerapi:
-    build: ../../src/Services/Atlas.Ledger
+    build: 
+      context: ../../
+      dockerfile: src/Services/Atlas.Ledger/Dockerfile
     environment:
       - ASPNETCORE_URLS=http://+:5181
       - ConnectionStrings__Ledger=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
@@ -177,7 +179,9 @@ services:
     ports: ["5181:5181"]
 
   paymentsapi:
-    build: ../../src/Services/Atlas.Payments
+    build: 
+      context: ../../
+      dockerfile: src/Services/Atlas.Payments/Dockerfile
     environment:
       - ASPNETCORE_URLS=http://+:5191
       - ConnectionStrings__Payments=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
@@ -187,13 +191,17 @@ services:
     ports: ["5191:5191"]
 
   gateway:
-    build: ../../src/Gateways/Atlas.ApiGateway
+    build: 
+      context: ../../
+      dockerfile: src/Gateways/Atlas.ApiGateway/Dockerfile
     environment: ["ASPNETCORE_URLS=http://+:5080"]
     depends_on: [ledgerapi, paymentsapi]
     ports: ["5080:5080"]
 
   amlworker:
-    build: ../../src/KycAml/Atlas.KycAml.Worker
+    build: 
+      context: ../../
+      dockerfile: src/KycAml/Atlas.KycAml.Worker/Dockerfile
     environment:
       - KAFKA_BOOTSTRAP=redpanda:9092
       - Rules__Path=/app/config/rules/aml-rules.yaml
