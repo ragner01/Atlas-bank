@@ -1,11 +1,13 @@
 # 🏦 AtlasBank - Production-Grade Fintech Platform
 
-[![Build Status](https://github.com/your-org/atlasbank/workflows/CI/badge.svg)](https://github.com/your-org/atlasbank/actions)
+[![Build Status](https://github.com/ragner01/Atlas-bank/workflows/CI/badge.svg)](https://github.com/ragner01/Atlas-bank/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/download)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![React Native](https://img.shields.io/badge/React%20Native-0.74.5-61DAFB.svg)](https://reactnative.dev/)
+[![Expo](https://img.shields.io/badge/Expo-SDK%2054-000020.svg)](https://expo.dev/)
 
-> **AtlasBank** is a production-ready, PCI DSS-compliant fintech platform built with .NET 8, featuring microservices architecture, real-time AML monitoring, and enterprise-grade security controls.
+> **AtlasBank** is a production-ready, PCI DSS-compliant fintech platform built with .NET 8, featuring microservices architecture, real-time AML monitoring, enterprise-grade security controls, and a modern mobile banking app with Tier-1 African fintech UI design.
 
 ## 🚀 **Key Features**
 
@@ -15,6 +17,18 @@
 - **🛡️ AML/Risk Engine**: Real-time transaction monitoring with YAML-configurable rules
 - **🔐 Identity Service**: OAuth2/OIDC with Azure AD B2C integration
 - **📈 Analytics**: ClickHouse-powered reporting and compliance
+
+### **📱 Mobile Banking App**
+- **🎨 Modern UI Design**: Tier-1 African fintech experience (Opay/Moniepoint style)
+- **💳 Gradient Balance Cards**: Glassmorphism effects with smooth animations
+- **🔄 Real-time Updates**: Live balance updates via SignalR WebSocket connections
+- **🌙 Dark/Light Mode**: Automatic theme switching with system preferences
+- **📱 Cross-platform**: React Native with Expo SDK 54 for iOS and Android
+- **⚡ Performance Optimized**: 60fps animations, optimized for low-end devices
+- **🔐 Biometric Security**: Face ID and fingerprint authentication
+- **💸 Smart Transfers**: Formatted amount inputs with currency symbols
+- **📊 Services Hub**: Expandable categories for bills, airtime, electricity
+- **🔄 Pull-to-refresh**: Manual balance reload with shimmer loading states
 
 ### **Enterprise Architecture**
 - **🏗️ Microservices**: Domain-driven design with hexagonal architecture
@@ -29,6 +43,9 @@
 - **🔄 Resilience**: Polly policies, circuit breakers, bulkheads
 - **📈 Scalability**: Kubernetes-native with auto-scaling
 - **🔐 Compliance**: PCI DSS, SOC 2, GDPR ready
+- **🚀 Real-time Optimization**: Phase 26 cost autotuning with load shedding
+- **💾 Smart Caching**: Redis-based balance caching with precise invalidation
+- **📊 Auto-scaling**: KEDA-based scaling based on Kafka lag and CPU metrics
 
 ## 🏗️ **Architecture Overview**
 
@@ -36,6 +53,7 @@
 graph TB
     subgraph "Client Layer"
         WEB[Web App]
+        MOBILE[Mobile App]
         API[Mobile API]
         GW[API Gateway]
     end
@@ -46,6 +64,7 @@ graph TB
         IDENTITY[Identity Service]
         AML[AML Worker]
         RISK[Risk Engine]
+        REALTIME[Realtime Service]
     end
     
     subgraph "Data Layer"
@@ -63,6 +82,7 @@ graph TB
     end
     
     WEB --> GW
+    MOBILE --> GW
     API --> GW
     GW --> LEDGER
     GW --> PAYMENTS
@@ -73,6 +93,8 @@ graph TB
     LEDGER --> KAFKA
     AML --> KAFKA
     RISK --> REDIS
+    REALTIME --> KAFKA
+    REALTIME --> REDIS
     
     LEDGER --> KEYVAULT
     PAYMENTS --> KEYVAULT
@@ -89,6 +111,17 @@ graph TB
 - **Entity Framework Core** - PostgreSQL with SERIALIZABLE transactions
 - **MediatR** - CQRS pattern implementation
 - **FluentValidation** - Input validation and business rules
+
+### **Mobile App**
+- **React Native 0.74.5** - Cross-platform mobile development
+- **Expo SDK 54** - Development platform and toolchain
+- **TypeScript** - Type-safe JavaScript development
+- **Expo Linear Gradient** - Beautiful gradient effects
+- **Expo Blur** - Glassmorphism and blur effects
+- **React Navigation** - Native navigation with animations
+- **AsyncStorage** - Local data persistence
+- **Expo SecureStore** - Secure credential storage
+- **SignalR Client** - Real-time WebSocket communication
 
 ### **Messaging & Events**
 - **Kafka/Event Hubs** - Event-driven architecture
@@ -128,8 +161,8 @@ graph TB
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-org/atlasbank.git
-   cd atlasbank
+   git clone https://github.com/ragner01/Atlas-bank.git
+   cd Atlas-bank
    ```
 
 2. **Start all services**
@@ -160,6 +193,52 @@ graph TB
    docker logs amlworker -f
    ```
 
+### **Mobile App Development**
+
+1. **Prerequisites**
+   ```bash
+   # Install Node.js 18+
+   node --version
+   
+   # Install Expo CLI
+   npm install -g @expo/cli
+   
+   # Install iOS Simulator (macOS only)
+   xcode-select --install
+   ```
+
+2. **Start Mobile Development**
+   ```bash
+   cd apps/mobile/expo
+   
+   # Install dependencies
+   npm install
+   
+   # Start development server
+   npx expo start
+   
+   # Start iOS Simulator
+   npx expo start --ios
+   
+   # Start web version
+   npx expo start --web
+   ```
+
+3. **Test Mobile App**
+   ```bash
+   # Demo credentials
+   Phone: 2348100000001
+   PIN: 1234
+   
+   # Features to test:
+   # - Login with biometric authentication
+   # - Dark/Light mode toggle
+   # - Real-time balance updates
+   # - Transfer money with formatted inputs
+   # - Services hub with expandable categories
+   # - Pull-to-refresh functionality
+   ```
+
 ### **Service Endpoints**
 
 | Service | HTTP Port | gRPC Port | Description |
@@ -168,6 +247,8 @@ graph TB
 | **Ledger Service** | 5181 | 7001 | Core accounting engine |
 | **Payments Service** | 5191 | - | Transfer processing |
 | **AML Worker** | - | - | Background risk monitoring |
+| **Realtime Service** | 5200 | - | SignalR WebSocket hub |
+| **Mobile App** | 3000 | - | Web version (development) |
 
 ## 📊 **API Documentation**
 
@@ -375,16 +456,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🆘 **Support**
 
 - **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/atlasbank/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/atlasbank/discussions)
-- **Security**: security@your-org.com
+- **Issues**: [GitHub Issues](https://github.com/ragner01/Atlas-bank/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ragner01/Atlas-bank/discussions)
+- **Security**: security@atlasbank.com
 
 ## 🏆 **Acknowledgments**
 
-- Built with ❤️ using .NET 8 and modern fintech best practices
+- Built with ❤️ using .NET 8, React Native, and modern fintech best practices
 - Inspired by Domain-Driven Design and Event-Driven Architecture
 - Compliant with PCI DSS and financial industry standards
+- Mobile UI inspired by Tier-1 African fintech leaders (Opay, Moniepoint, PalmPay)
 
 ---
 
-**AtlasBank** - *Building the future of digital banking* 🚀
+**AtlasBank** - *Building the future of digital banking with beautiful mobile experiences* 🚀📱
