@@ -23,7 +23,14 @@ builder.Services.AddScoped<ITenantContext>(sp =>
 builder.Services.AddHttpContextAccessor();
 
 // Add messaging services
-builder.Services.AddSingleton<IEventPublisher>(_ => new Atlas.Messaging.KafkaPublisher(Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP") ?? "redpanda:9092"));
+builder.Services.AddSingleton<IEventPublisher>(sp => 
+{
+    var publisher = new Atlas.Messaging.KafkaPublisher(Environment.GetEnvironmentVariable("KAFKA_BOOTSTRAP") ?? "redpanda:9092");
+    // Register for disposal when the service provider is disposed
+    var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
+    lifetime.ApplicationStopping.Register(() => publisher.DisposeAsync().AsTask().Wait());
+    return publisher;
+});
 builder.Services.AddSingleton<IOutboxStore, Atlas.Messaging.InMemoryOutboxStore>();
 builder.Services.AddHostedService<Atlas.Messaging.OutboxDispatcher>();
 
@@ -42,8 +49,10 @@ app.MapPost("/ledger/entries", async (PostRequest req, PostJournalEntryHandler h
 {
     return await ExecuteSerializableAsync(db, async () =>
     {
-        var debit = (new AccountId(req.SourceAccountId), new Money(req.Minor, Currency.FromCode(req.Currency)));
-        var credit = (new AccountId(req.DestinationAccountId), new Money(req.Minor, Currency.FromCode(req.Currency)));
+        // Convert minor units to decimal value (minor units / 10^scale)
+        var decimalValue = req.Minor / 100m; // Assuming scale of 2 for most currencies
+        var debit = (new AccountId(req.SourceAccountId), new Money(decimalValue, Currency.FromCode(req.Currency), 2));
+        var credit = (new AccountId(req.DestinationAccountId), new Money(decimalValue, Currency.FromCode(req.Currency), 2));
         var entry = await handler.HandleAsync(new(req.Narration, new[] { debit }, new[] { credit }), ct);
         return Results.Accepted($"/ledger/entries/{entry.Id.Value}", new { id = entry.Id.Value, status = "Pending" });
     });

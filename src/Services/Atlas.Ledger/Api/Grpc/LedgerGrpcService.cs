@@ -20,8 +20,10 @@ public sealed class LedgerGrpcService : LedgerService.LedgerServiceBase
 
     public override async Task<PostEntryResponse> PostEntry(PostEntryRequest request, ServerCallContext context)
     {
+        // Convert minor units to decimal value (minor units / 10^scale)
+        var decimalValue = request.Amount.Minor / (decimal)Math.Pow(10, request.Amount.Scale);
         var money = new Atlas.Common.ValueObjects.Money(
-            request.Amount.Minor, 
+            decimalValue, 
             Atlas.Common.ValueObjects.Currency.FromCode(request.Amount.Currency), 
             request.Amount.Scale);
         
@@ -47,8 +49,8 @@ public sealed class LedgerGrpcService : LedgerService.LedgerServiceBase
         { 
             AccountId = request.AccountId, 
             LedgerMinor = acc.Balance.LedgerCents, 
-            Currency = acc.Currency.Code, 
-            Scale = 2 
+            Currency = acc.Balance.Currency.Code, 
+            Scale = acc.Balance.Scale 
         };
     }
 }

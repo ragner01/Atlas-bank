@@ -7,7 +7,13 @@ namespace Atlas.Ledger.App;
 public sealed class EfLedgerRepository : ILedgerRepository
 {
     private readonly LedgerDbContext _db;
-    public EfLedgerRepository(LedgerDbContext db) => _db = db;
+    private readonly ITenantContext _tenantContext;
+    
+    public EfLedgerRepository(LedgerDbContext db, ITenantContext tenantContext) 
+    { 
+        _db = db; 
+        _tenantContext = tenantContext; 
+    }
 
     public async Task<Account> GetAsync(AccountId id, CancellationToken ct)
     {
@@ -15,13 +21,14 @@ public sealed class EfLedgerRepository : ILedgerRepository
         if (row is null)
         {
             // Create a new account if it doesn't exist
+            var tenantId = _tenantContext.IsValid ? _tenantContext.CurrentTenant : new TenantId("tnt_demo");
             var newAccount = new Account(
                 new EntityId(id.Value),
-                new TenantId("tnt_demo"), // TODO: Get from context
+                tenantId,
                 id.Value,
                 $"Account {id.Value}",
-                AccountType.Asset, // Default to Asset
-                Currency.FromCode("NGN") // Default currency
+                AccountType.Asset, // Default to Asset - in production this should be determined by business rules
+                Currency.FromCode("NGN") // Default currency - in production this should be configurable
             );
             return newAccount;
         }
@@ -31,7 +38,7 @@ public sealed class EfLedgerRepository : ILedgerRepository
             new TenantId(row.TenantId),
             row.Id,
             $"Account {row.Id}",
-            AccountType.Asset, // TODO: Store account type in DB
+            AccountType.Asset, // TODO: Add AccountType to database schema
             Currency.FromCode(row.Currency)
         );
         account.RestoreBalance(new Money(row.LedgerCents, Currency.FromCode(row.Currency), 2));

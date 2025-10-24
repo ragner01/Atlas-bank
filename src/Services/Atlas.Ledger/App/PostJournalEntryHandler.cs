@@ -2,6 +2,7 @@ using Atlas.Common.ValueObjects;
 using Atlas.Ledger.Domain;
 using Atlas.Messaging;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace Atlas.Ledger.App;
 
@@ -14,18 +15,23 @@ public sealed class PostJournalEntryHandler
     private readonly ILedgerRepository _repository;
     private readonly IOutboxStore _outbox;
     private readonly ITenantContext _tenantContext;
+    private readonly LedgerDbContext _dbContext;
 
-    public PostJournalEntryHandler(ILedgerRepository repository, IOutboxStore outbox, ITenantContext tenantContext)
+    public PostJournalEntryHandler(ILedgerRepository repository, IOutboxStore outbox, ITenantContext tenantContext, LedgerDbContext dbContext)
     {
         _repository = repository;
         _outbox = outbox;
         _tenantContext = tenantContext;
+        _dbContext = dbContext;
     }
 
     public async Task<JournalEntry> HandleAsync(PostJournalEntryCommand command, CancellationToken cancellationToken)
     {
         if (!_tenantContext.IsValid)
             throw new InvalidOperationException("Invalid tenant context");
+
+        // Validate journal entry before processing
+        ValidateJournalEntry(command);
 
         var entryId = new JournalEntryId(Guid.NewGuid());
         var tenantId = _tenantContext.CurrentTenant;
@@ -40,13 +46,16 @@ public sealed class PostJournalEntryHandler
             command.Credits.Select(c => new JournalEntryLine(c.AccountId, c.Amount, JournalEntryLineType.Credit))
         );
 
-        // Process all account updates in a single transaction
+        // Process all account updates within the existing transaction
         var accountsToUpdate = new List<Account>();
         
         // Collect all debit operations
         foreach (var debit in command.Debits)
         {
             var account = await _repository.GetAsync(debit.AccountId, cancellationToken);
+            if (account == null)
+                throw new InvalidOperationException($"Account {debit.AccountId.Value} not found");
+                
             var debitResult = account.Debit(debit.Amount);
             if (!debitResult.IsSuccess)
             {
@@ -59,6 +68,9 @@ public sealed class PostJournalEntryHandler
         foreach (var credit in command.Credits)
         {
             var account = await _repository.GetAsync(credit.AccountId, cancellationToken);
+            if (account == null)
+                throw new InvalidOperationException($"Account {credit.AccountId.Value} not found");
+                
             var creditResult = account.Credit(credit.Amount);
             if (!creditResult.IsSuccess)
             {
@@ -67,7 +79,7 @@ public sealed class PostJournalEntryHandler
             accountsToUpdate.Add(account);
         }
 
-        // Save all accounts atomically
+        // Save all accounts atomically (within existing transaction)
         foreach (var account in accountsToUpdate)
         {
             await _repository.SaveAsync(account, cancellationToken);
@@ -75,7 +87,7 @@ public sealed class PostJournalEntryHandler
 
         entry.MarkPosted();
 
-        // Publish to outbox for AML processing
+        // Publish to outbox for AML processing (after successful transaction)
         await _outbox.EnqueueAsync(new OutboxMessage(
             Guid.NewGuid(), 
             "ledger-events", 
@@ -90,5 +102,37 @@ public sealed class PostJournalEntryHandler
             cancellationToken);
 
         return entry;
+    }
+
+    private static void ValidateJournalEntry(PostJournalEntryCommand command)
+    {
+        if (string.IsNullOrWhiteSpace(command.Narration))
+            throw new ArgumentException("Narration cannot be empty", nameof(command.Narration));
+
+        if (command.Debits.Length == 0 || command.Credits.Length == 0)
+            throw new ArgumentException("Journal entry must have at least one debit and one credit");
+
+        // Validate that total debits equal total credits
+        var totalDebits = command.Debits.Sum(d => d.Amount.LedgerCents);
+        var totalCredits = command.Credits.Sum(c => c.Amount.LedgerCents);
+        
+        if (totalDebits != totalCredits)
+            throw new ArgumentException($"Journal entry is not balanced: Debits {totalDebits} != Credits {totalCredits}");
+
+        // Validate all amounts are positive
+        if (command.Debits.Any(d => d.Amount.LedgerCents <= 0))
+            throw new ArgumentException("All debit amounts must be positive");
+        
+        if (command.Credits.Any(c => c.Amount.LedgerCents <= 0))
+            throw new ArgumentException("All credit amounts must be positive");
+
+        // Validate currency consistency
+        var currencies = command.Debits.Select(d => d.Amount.Currency.Code)
+            .Concat(command.Credits.Select(c => c.Amount.Currency.Code))
+            .Distinct()
+            .ToList();
+            
+        if (currencies.Count > 1)
+            throw new ArgumentException($"All amounts must be in the same currency, found: {string.Join(", ", currencies)}");
     }
 }
