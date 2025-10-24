@@ -17,6 +17,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<LedgerApiOptions>(builder.Configuration.GetSection(LedgerApiOptions.SectionName));
 builder.Services.AddSingleton<IValidateOptions<LedgerApiOptions>, LedgerApiOptionsValidator>();
 
+// Configure rate limiting
+builder.Services.Configure<RateLimitingOptions>(builder.Configuration.GetSection("RateLimiting"));
+builder.Services.AddSingleton<RateLimitingOptions>(sp => 
+    sp.GetRequiredService<IOptions<RateLimitingOptions>>().Value);
+
 var cs = builder.Configuration.GetConnectionString("Ledger");
 builder.Services.AddDbContext<LedgerDbContext>(o => o.UseNpgsql(cs, npgsqlOptions =>
 {
@@ -36,7 +41,12 @@ builder.Services.AddSingleton(_ =>
         .EnableParameterLogging(false);
     return opts.Build();
 });
-builder.Services.AddSingleton<Atlas.Ledger.App.FastTransferHandler>();
+builder.Services.AddSingleton<Atlas.Ledger.App.FastTransferHandler>(sp =>
+{
+    var ds = sp.GetRequiredService<NpgsqlDataSource>();
+    var logger = sp.GetRequiredService<ILogger<Atlas.Ledger.App.FastTransferHandler>>();
+    return new Atlas.Ledger.App.FastTransferHandler(ds, logger);
+});
 
 // Add Redis multiplexer (shared)
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
@@ -63,8 +73,87 @@ builder.Services.AddSingleton<IEventPublisher>(sp =>
 builder.Services.AddSingleton<IOutboxStore, Atlas.Messaging.InMemoryOutboxStore>();
 builder.Services.AddHostedService<Atlas.Messaging.OutboxDispatcher>();
 
-// Add gRPC services
-builder.Services.AddGrpc();
+// Add metrics collection
+builder.Services.AddSingleton<Atlas.Ledger.Api.Metrics.LedgerMetricsCollector>();
+builder.Services.AddHostedService<Atlas.Ledger.Api.Metrics.LedgerMetricsCollector>(sp =>
+    sp.GetRequiredService<Atlas.Ledger.Api.Metrics.LedgerMetricsCollector>());
+
+// Add API documentation
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "Atlas Bank Ledger API",
+        Version = "v1",
+        Description = "High-performance financial ledger API with multi-tenancy support",
+        Contact = new Microsoft.OpenApi.Models.OpenApiContact
+        {
+            Name = "Atlas Bank Development Team",
+            Email = "dev@atlasbank.com"
+        },
+        License = new Microsoft.OpenApi.Models.OpenApiLicense
+        {
+            Name = "Proprietary",
+            Url = new Uri("https://atlasbank.com/license")
+        }
+    });
+
+    // Add XML comments
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        c.IncludeXmlComments(xmlPath);
+    }
+
+    // Add security definitions
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "JWT Authorization header using the Bearer scheme"
+    });
+
+    c.AddSecurityDefinition("TenantHeader", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Name = "X-Tenant-Id",
+        Description = "Tenant identifier for multi-tenant operations"
+    });
+
+    // Add security requirements
+    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        },
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                {
+                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                    Id = "TenantHeader"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+
+    // Add examples
+    c.SchemaFilter<ExampleSchemaFilter>();
+});
 
 var app = builder.Build();
 
@@ -79,9 +168,23 @@ if (validationResult.Failed)
     throw new InvalidOperationException($"Configuration validation failed: {string.Join(", ", validationResult.Failures)}");
 }
 
-// Add security and exception handling middleware
+// Add security, rate limiting, metrics, and exception handling middleware
 app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseMiddleware<RateLimitingMiddleware>();
+app.UseMiddleware<Atlas.Ledger.Api.Metrics.MetricsMiddleware>();
 app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
+
+// Add Swagger UI in development
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Atlas Bank Ledger API v1");
+        c.RoutePrefix = "api-docs";
+        c.DocumentTitle = "Atlas Bank Ledger API Documentation";
+    });
+}
 
 // Map gRPC service
 app.MapGrpcService<Atlas.Ledger.Api.Grpc.LedgerGrpcService>();
