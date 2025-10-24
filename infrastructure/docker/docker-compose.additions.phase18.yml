@@ -1,0 +1,34 @@
+services:
+  trust-portal:
+    build: 
+      context: ../../src/Trust/Atlas.Trust.Portal
+      dockerfile: Dockerfile
+    environment:
+      - ASPNETCORE_URLS=http://+:5802
+      - TRUST_CORE=http://trust:5801
+      - BLOB_CONN=UseDevelopmentStorage=true
+      - OPEN_DATA_CONTAINER=opendata
+      - REGULATOR_API_KEY=dev-reg-key
+      - REGULATOR_API_SIG=reg-sign-secret
+    depends_on: [trust]
+    ports: ["5802:5802"]
+    networks: [atlas-network]
+    restart: unless-stopped
+
+  trust-export:
+    build: 
+      context: ../../src/Trust/Atlas.Trust.Export
+      dockerfile: Dockerfile
+    environment:
+      - BLOB_CONN=UseDevelopmentStorage=true
+      - OPEN_DATA_CONTAINER=opendata
+      - LEDGER_CONN=Host=postgres;Port=5432;Database=atlas;Username=postgres;Password=postgres
+      - EXPORT_EVERY_MIN=10080   # weekly
+    depends_on: [postgres]
+    networks: [atlas-network]
+    restart: unless-stopped
+
+networks:
+  atlas-network:
+    external: true
+

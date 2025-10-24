@@ -1,138 +1,68 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Options;
 
 namespace Atlas.Ledger.Api.Configuration;
 
 /// <summary>
-/// Configuration options for the Ledger API service
+/// Configuration options for the Ledger API
 /// </summary>
 public class LedgerApiOptions
 {
-    /// <summary>
-    /// The configuration section name for Ledger API options
-    /// </summary>
     public const string SectionName = "LedgerApi";
 
     /// <summary>
-    /// Database connection string
+    /// Maximum number of accounts that can be created per tenant
     /// </summary>
-    public string ConnectionString { get; set; } = string.Empty;
+    [Range(1, 10000, ErrorMessage = "MaxAccountsPerTenant must be between 1 and 10000")]
+    public int MaxAccountsPerTenant { get; set; } = 1000;
 
     /// <summary>
-    /// Redis connection string
+    /// Maximum transaction amount in minor units
     /// </summary>
-    public string RedisConnectionString { get; set; } = string.Empty;
+    [Range(1, long.MaxValue, ErrorMessage = "MaxTransactionAmount must be greater than 0")]
+    public long MaxTransactionAmount { get; set; } = 100000000; // 1M in minor units
 
     /// <summary>
-    /// Kafka bootstrap servers
+    /// Enable fast transfer optimization
     /// </summary>
-    public string KafkaBootstrapServers { get; set; } = string.Empty;
+    public bool EnableFastTransfer { get; set; } = true;
 
     /// <summary>
-    /// Hedged read configuration
+    /// Connection timeout for database operations in seconds
     /// </summary>
-    public HedgedReadOptions HedgedRead { get; set; } = new();
+    [Range(5, 300, ErrorMessage = "DatabaseTimeoutSeconds must be between 5 and 300")]
+    public int DatabaseTimeoutSeconds { get; set; } = 30;
 
     /// <summary>
-    /// Retry policy configuration
+    /// Maximum retry count for database operations
     /// </summary>
-    public RetryPolicyOptions RetryPolicy { get; set; } = new();
-
-    /// <summary>
-    /// Security configuration
-    /// </summary>
-    public SecurityOptions Security { get; set; } = new();
+    [Range(0, 10, ErrorMessage = "MaxRetryCount must be between 0 and 10")]
+    public int MaxRetryCount { get; set; } = 3;
 }
 
 /// <summary>
-/// Hedged read configuration options
-/// </summary>
-public class HedgedReadOptions
-{
-    /// <summary>
-    /// Delay in milliseconds before starting database read
-    /// </summary>
-    public int DelayMs { get; set; } = 12;
-}
-
-/// <summary>
-/// Retry policy configuration options
-/// </summary>
-public class RetryPolicyOptions
-{
-    /// <summary>
-    /// Maximum number of retries
-    /// </summary>
-    public int MaxRetries { get; set; } = 3;
-
-    /// <summary>
-    /// Maximum retry delay in seconds
-    /// </summary>
-    public int MaxRetryDelaySeconds { get; set; } = 5;
-}
-
-/// <summary>
-/// Security configuration options
-/// </summary>
-public class SecurityOptions
-{
-    /// <summary>
-    /// Enable security headers
-    /// </summary>
-    public bool EnableSecurityHeaders { get; set; } = true;
-
-    /// <summary>
-    /// Enable CORS
-    /// </summary>
-    public bool EnableCors { get; set; } = false;
-}
-
-/// <summary>
-/// Validator for LedgerApiOptions configuration
+/// Validator for LedgerApiOptions
 /// </summary>
 public class LedgerApiOptionsValidator : IValidateOptions<LedgerApiOptions>
 {
-    /// <summary>
-    /// Validates the LedgerApiOptions configuration
-    /// </summary>
-    /// <param name="name">The configuration section name</param>
-    /// <param name="options">The options to validate</param>
-    /// <returns>Validation result</returns>
     public ValidateOptionsResult Validate(string? name, LedgerApiOptions options)
     {
-        var failures = new List<string>();
+        var errors = new List<string>();
 
-        if (string.IsNullOrWhiteSpace(options.ConnectionString))
-        {
-            failures.Add("ConnectionString is required");
-        }
+        if (options.MaxAccountsPerTenant <= 0)
+            errors.Add("MaxAccountsPerTenant must be greater than 0");
 
-        if (string.IsNullOrWhiteSpace(options.RedisConnectionString))
-        {
-            failures.Add("RedisConnectionString is required");
-        }
+        if (options.MaxTransactionAmount <= 0)
+            errors.Add("MaxTransactionAmount must be greater than 0");
 
-        if (string.IsNullOrWhiteSpace(options.KafkaBootstrapServers))
-        {
-            failures.Add("KafkaBootstrapServers is required");
-        }
+        if (options.DatabaseTimeoutSeconds <= 0)
+            errors.Add("DatabaseTimeoutSeconds must be greater than 0");
 
-        if (options.HedgedRead.DelayMs < 0 || options.HedgedRead.DelayMs > 1000)
-        {
-            failures.Add("HedgedRead.DelayMs must be between 0 and 1000 milliseconds");
-        }
+        if (options.MaxRetryCount < 0)
+            errors.Add("MaxRetryCount must be non-negative");
 
-        if (options.RetryPolicy.MaxRetries < 0 || options.RetryPolicy.MaxRetries > 10)
-        {
-            failures.Add("RetryPolicy.MaxRetries must be between 0 and 10");
-        }
-
-        if (options.RetryPolicy.MaxRetryDelaySeconds < 1 || options.RetryPolicy.MaxRetryDelaySeconds > 60)
-        {
-            failures.Add("RetryPolicy.MaxRetryDelaySeconds must be between 1 and 60 seconds");
-        }
-
-        return failures.Count > 0 
-            ? ValidateOptionsResult.Fail(failures) 
+        return errors.Count > 0 
+            ? ValidateOptionsResult.Fail(errors) 
             : ValidateOptionsResult.Success;
     }
 }

@@ -1,0 +1,91 @@
+# Optimized Dockerfile template for AtlasBank services
+# This template demonstrates best practices for layer caching and security
+
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+WORKDIR /src
+
+# Install build dependencies in a single layer
+RUN apk update && apk upgrade && \
+    apk add --no-cache ca-certificates tzdata && \
+    rm -rf /var/cache/apk/*
+
+# Copy only project files first for better layer caching
+COPY ["src/BuildingBlocks/Atlas.Common/Atlas.Common.csproj", "src/BuildingBlocks/Atlas.Common/"]
+COPY ["src/BuildingBlocks/Atlas.Messaging/Atlas.Messaging.csproj", "src/BuildingBlocks/Atlas.Messaging/"]
+COPY ["src/BuildingBlocks/Atlas.Persistence/Atlas.Persistence.csproj", "src/BuildingBlocks/Atlas.Persistence/"]
+COPY ["src/BuildingBlocks/Atlas.Security/Atlas.Security.csproj", "src/BuildingBlocks/Atlas.Security/"]
+COPY ["src/BuildingBlocks/Atlas.Observability/Atlas.Observability.csproj", "src/BuildingBlocks/Atlas.Observability/"]
+COPY ["src/BuildingBlocks/Atlas.Resilience/Atlas.Resilience.csproj", "src/BuildingBlocks/Atlas.Resilience/"]
+COPY ["src/BuildingBlocks/Atlas.Database/Atlas.Database.csproj", "src/BuildingBlocks/Atlas.Database/"]
+COPY ["src/Services/Atlas.Ledger/Atlas.Ledger.csproj", "src/Services/Atlas.Ledger/"]
+
+# Restore dependencies (this layer will be cached if project files don't change)
+RUN dotnet restore "src/Services/Atlas.Ledger/Atlas.Ledger.csproj" \
+    --runtime linux-musl-x64 \
+    --verbosity quiet
+
+# Copy source code (this layer will be rebuilt when source changes)
+COPY . .
+
+# Build the application
+WORKDIR /src/src/Services/Atlas.Ledger
+RUN dotnet build "Atlas.Ledger.csproj" \
+    -c Release \
+    -o /app/build \
+    --no-restore \
+    --verbosity quiet
+
+# Publish stage
+FROM build AS publish
+RUN dotnet publish "Atlas.Ledger.csproj" \
+    -c Release \
+    -o /app/publish \
+    --no-build \
+    --self-contained false \
+    --runtime linux-musl-x64 \
+    /p:PublishSingleFile=false \
+    /p:PublishTrimmed=false \
+    /p:EnableCompressionInSingleFile=false \
+    --verbosity quiet
+
+# Runtime stage - Security hardened
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS runtime
+WORKDIR /app
+
+# Install runtime dependencies in a single layer
+RUN apk update && apk upgrade && \
+    apk add --no-cache ca-certificates tzdata wget && \
+    rm -rf /var/cache/apk/*
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+# Copy published application
+COPY --from=publish /app/publish .
+
+# Set proper permissions
+RUN chown -R appuser:appgroup /app && \
+    chmod -R 755 /app
+
+# Switch to non-root user
+USER appuser
+
+# Set environment variables
+ENV ASPNETCORE_URLS=http://+:${PORT:-5181}
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+ENV DOTNET_RUNNING_IN_CONTAINER=true
+ENV PORT=${PORT:-5181}
+
+# Expose port
+EXPOSE ${PORT:-5181}
+
+# Health check using wget with environment variable
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-5181}/health || exit 1
+
+# Use exec form for better signal handling
+ENTRYPOINT ["dotnet", "Atlas.Ledger.dll"]
+

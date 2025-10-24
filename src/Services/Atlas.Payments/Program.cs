@@ -11,13 +11,21 @@ using Microsoft.AspNetCore.HttpOverrides;
 using StackExchange.Redis;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
+using Atlas.Payments.Api.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure options
-builder.Services.Configure<PaymentsApiOptions>(builder.Configuration.GetSection("PaymentsApi"));
-builder.Services.Configure<RedisOptions>(builder.Configuration.GetSection("Redis"));
-builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+// Configure and validate options
+builder.Services.Configure<PaymentsApiOptions>(builder.Configuration.GetSection(PaymentsApiOptions.SectionName));
+builder.Services.Configure<RedisOptions>(builder.Configuration.GetSection(RedisOptions.SectionName));
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
+builder.Services.Configure<CorsOptions>(builder.Configuration.GetSection(CorsOptions.SectionName));
+
+// Add validators
+builder.Services.AddSingleton<IValidateOptions<PaymentsApiOptions>, PaymentsApiOptionsValidator>();
+builder.Services.AddSingleton<IValidateOptions<RedisOptions>, RedisOptionsValidator>();
+builder.Services.AddSingleton<IValidateOptions<JwtOptions>, JwtOptionsValidator>();
+builder.Services.AddSingleton<IValidateOptions<CorsOptions>, CorsOptionsValidator>();
 
 // Add response compression
 builder.Services.AddResponseCompression(options =>
@@ -38,17 +46,23 @@ builder.Services.Configure<GzipCompressionProviderOptions>(options =>
     options.Level = System.IO.Compression.CompressionLevel.Optimal;
 });
 
-// Configure CORS
+// Configure CORS - RESTRICTIVE CONFIGURATION
 builder.Services.AddCors(options =>
 {
-    var corsOptions = builder.Configuration.GetSection("Cors").Get<CorsOptions>() ?? new CorsOptions();
+    var corsOptions = builder.Configuration.GetSection("Cors").Get<CorsOptions>();
+    
+    if (corsOptions?.AllowedOrigins == null || corsOptions.AllowedOrigins.Length == 0)
+    {
+        throw new InvalidOperationException("CORS allowed origins must be configured via Cors:AllowedOrigins");
+    }
+    
     options.AddPolicy("AtlasBankPolicy", policy =>
     {
-        policy.WithOrigins(corsOptions.AllowedOrigins?.ToArray() ?? new[] { "http://localhost:3000", "https://localhost:3000" })
-              .AllowAnyMethod()
-              .AllowAnyHeader()
+        policy.WithOrigins(corsOptions.AllowedOrigins.ToArray())
+              .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") // Restrict methods
+              .WithHeaders("Authorization", "Content-Type", "X-Tenant-Id", "X-Request-ID") // Restrict headers
               .AllowCredentials()
-              .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
+              .SetPreflightMaxAge(TimeSpan.FromMinutes(10)); // Cache preflight requests
     });
 });
 

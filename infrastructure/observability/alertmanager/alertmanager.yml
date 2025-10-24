@@ -1,0 +1,39 @@
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@atlasbank.com'
+
+route:
+  group_by: ['alertname', 'job']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 2h
+  receiver: 'pager'
+  routes:
+    - match:
+        severity: page
+      receiver: 'pager'
+    - match:
+        severity: warn
+      receiver: 'warnings'
+
+receivers:
+  - name: 'pager'
+    webhook_configs:
+      - url: 'http://webhooks:5703/webhooks/enqueue?endpoint=http://localhost:8080/oncall'
+        send_resolved: true
+        title: 'AtlasBank Alert: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+  - name: 'warnings'
+    webhook_configs:
+      - url: 'http://webhooks:5703/webhooks/enqueue?endpoint=http://localhost:8080/warnings'
+        send_resolved: true
+        title: 'AtlasBank Warning: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+inhibit_rules:
+  - source_match:
+      severity: 'page'
+    target_match:
+      severity: 'warn'
+    equal: ['alertname', 'job']

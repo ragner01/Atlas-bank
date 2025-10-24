@@ -1,0 +1,77 @@
+groups:
+- name: api-slo
+  rules:
+  - record: job:http_req_errors:rate5m
+    expr: sum(rate(http_server_requests_seconds_count{code!~"2..|3.."}[5m])) by (job)
+  
+  - record: job:http_req_total:rate5m
+    expr: sum(rate(http_server_requests_seconds_count[5m])) by (job)
+  
+  - record: job:error_budget:5m
+    expr: 1 - (job:http_req_errors:rate5m / job:http_req_total:rate5m)
+  
+  - alert: APISLOErrorBudgetBurn
+    expr: job:error_budget:5m < 0.995
+    for: 10m
+    labels:
+      severity: page
+    annotations:
+      summary: "API SLO burn >0.5% ({{ $labels.job }})"
+      description: "Error budget burn rate is too high for {{ $labels.job }}"
+      runbook_url: "https://runbooks.atlas/observability/slo-error-budget"
+
+- name: latency-slo
+  rules:
+  - alert: P99LatencyTooHigh
+    expr: histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, job)) > 0.25
+    for: 10m
+    labels:
+      severity: page
+    annotations:
+      summary: "P99 latency > 250ms ({{ $labels.job }})"
+      description: "P99 latency is too high for {{ $labels.job }}"
+      runbook_url: "https://runbooks.atlas/performance/p99-latency"
+
+- name: limits-abuse
+  rules:
+  - alert: LimitsSoftReviewSpike
+    expr: sum(rate(http_client_requests_seconds_count{path="/limits/check",status="200"}[5m])) by (job) > 50
+    for: 5m
+    labels:
+      severity: warn
+    annotations:
+      summary: "Spike in limits checks; possible abuse or attack"
+      description: "High volume of limits checks detected for {{ $labels.job }}"
+      runbook_url: "https://runbooks.atlas/security/limits-abuse"
+
+  - alert: LimitsHardBlockSpike
+    expr: sum(rate(http_client_requests_seconds_count{path="/limits/check",status="403"}[5m])) by (job) > 10
+    for: 2m
+    labels:
+      severity: page
+    annotations:
+      summary: "Spike in hard blocks; possible attack"
+      description: "High volume of hard blocks detected for {{ $labels.job }}"
+      runbook_url: "https://runbooks.atlas/security/limits-abuse"
+
+- name: canary-health
+  rules:
+  - alert: CanaryDown
+    expr: up{job="canary"} == 0
+    for: 1m
+    labels:
+      severity: page
+    annotations:
+      summary: "Canary service is down"
+      description: "Synthetic canary service is not responding"
+      runbook_url: "https://runbooks.atlas/observability/canary-down"
+
+  - alert: CanaryHighLatency
+    expr: histogram_quantile(0.95, sum(rate(http_client_requests_seconds_bucket{job="canary"}[5m])) by (le)) > 1.0
+    for: 5m
+    labels:
+      severity: warn
+    annotations:
+      summary: "Canary latency is high"
+      description: "P95 latency for canary requests is > 1s"
+      runbook_url: "https://runbooks.atlas/observability/canary-latency"

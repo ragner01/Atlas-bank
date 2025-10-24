@@ -20,10 +20,18 @@ var kestrelConfig = new ConfigurationBuilder()
     .Build();
 builder.WebHost.UseKestrel().UseConfiguration(kestrelConfig);
 
-// Add Redis for rate limiting
+// Add Redis for rate limiting - NO HARDCODED FALLBACKS
 builder.Services.AddStackExchangeRedisCache(options =>
 {
-    options.Configuration = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+    var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? 
+                               Environment.GetEnvironmentVariable("REDIS");
+    
+    if (string.IsNullOrEmpty(redisConnectionString))
+    {
+        throw new InvalidOperationException("Redis connection string must be configured via ConnectionStrings:Redis or REDIS environment variable");
+    }
+    
+    options.Configuration = redisConnectionString;
 });
 
 // Add rate limiting
@@ -34,7 +42,7 @@ builder.Services.AddRateLimiter(options =>
             partitionKey: context.User?.Identity?.Name ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
             factory: _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = int.Parse(builder.Configuration["RateLimiting:PermitPerMinute"] ?? "120"),
+                PermitLimit = int.Parse(builder.Configuration["RateLimiting:PermitPerMinute"] ?? "60"), // Conservative default
                 Window = TimeSpan.FromMinutes(1),
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 QueueLimit = 10
@@ -93,15 +101,23 @@ builder.Services.AddReverseProxy()
 builder.Services.AddHealthChecks()
     .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy());
 
-// Add CORS
+// Add CORS - RESTRICTIVE CONFIGURATION
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AtlasBank", policy =>
     {
-        policy.WithOrigins(builder.Configuration.GetSection("ApiGateway:Cors:AllowedOrigins").Get<string[]>() ?? new[] { "https://localhost:3000" })
-              .AllowAnyMethod()
-              .AllowAnyHeader()
-              .AllowCredentials();
+        var allowedOrigins = builder.Configuration.GetSection("ApiGateway:Cors:AllowedOrigins").Get<string[]>();
+        
+        if (allowedOrigins == null || allowedOrigins.Length == 0)
+        {
+            throw new InvalidOperationException("CORS allowed origins must be configured via ApiGateway:Cors:AllowedOrigins");
+        }
+        
+        policy.WithOrigins(allowedOrigins)
+              .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") // Restrict methods
+              .WithHeaders("Authorization", "Content-Type", "X-Tenant-Id", "X-Request-ID") // Restrict headers
+              .AllowCredentials()
+              .SetPreflightMaxAge(TimeSpan.FromMinutes(10)); // Cache preflight requests
     });
 });
 

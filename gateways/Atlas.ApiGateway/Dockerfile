@@ -17,6 +17,9 @@ RUN dotnet publish "gateways/Atlas.ApiGateway/Atlas.ApiGateway.csproj" -c Releas
 # Use distroless image for better security
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy AS final
 
+# Install wget for health checks
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
@@ -29,9 +32,9 @@ COPY --from=publish /app/publish .
 RUN chown -R appuser:appgroup /app
 USER appuser
 
-# Health check
+# Health check using wget (no curl dependency)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5080/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-5080}/health || exit 1
 
 # Resource limits
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1

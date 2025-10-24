@@ -1,0 +1,40 @@
+services:
+  kyc:
+    build: ../../src/Compliance/Atlas.Kyc
+    environment:
+      - ASPNETCORE_URLS=http://+:5801
+      - KYC_DB=Host=postgres;Database=atlas;Username=postgres;Password=postgres
+      - REDIS=redis:6379
+    ports: ["5801:5801"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5801/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  aml:
+    build: ../../src/Compliance/Atlas.Aml
+    environment:
+      - ASPNETCORE_URLS=http://+:5802
+      - REDIS=redis:6379
+    ports: ["5802:5802"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5802/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  caseapi:
+    build: ../../src/Compliance/Atlas.Case
+    environment:
+      - ASPNETCORE_URLS=http://+:5803
+      - CASE_DB=Host=postgres;Database=atlas;Username=postgres;Password=postgres
+    ports: ["5803:5803"]
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5803/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s

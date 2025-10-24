@@ -29,6 +29,9 @@ RUN dotnet publish Atlas.Ledger.csproj -c Release -o /app/publish --no-build /p:
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
 WORKDIR /app
 
+# Install wget for health checks
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN groupadd -r ledgeruser && useradd -r -g ledgeruser ledgeruser
 
@@ -49,9 +52,9 @@ ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 # Expose port
 EXPOSE 5181
 
-# Health check without curl
+# Health check using wget
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD dotnet /app/Atlas.Ledger.dll --health-check || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-5181}/health || exit 1
 
 # Entry point
 ENTRYPOINT ["dotnet", "Atlas.Ledger.dll"]

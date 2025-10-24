@@ -1,0 +1,79 @@
+# Multi-stage build for Atlas Ledger API - SECURITY OPTIMIZED
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+WORKDIR /src
+
+# Install security updates
+RUN apk update && apk upgrade && apk add --no-cache ca-certificates
+
+# Copy project files for better layer caching
+COPY src/BuildingBlocks/Atlas.Common/Atlas.Common.csproj src/BuildingBlocks/Atlas.Common/
+COPY src/BuildingBlocks/Atlas.Messaging/Atlas.Messaging.csproj src/BuildingBlocks/Atlas.Messaging/
+COPY src/BuildingBlocks/Atlas.Persistence/Atlas.Persistence.csproj src/BuildingBlocks/Atlas.Persistence/
+COPY src/BuildingBlocks/Atlas.Security/Atlas.Security.csproj src/BuildingBlocks/Atlas.Security/
+COPY src/BuildingBlocks/Atlas.Observability/Atlas.Observability.csproj src/BuildingBlocks/Atlas.Observability/
+COPY src/BuildingBlocks/Atlas.Resilience/Atlas.Resilience.csproj src/BuildingBlocks/Atlas.Resilience/
+COPY src/BuildingBlocks/Atlas.Database/Atlas.Database.csproj src/BuildingBlocks/Atlas.Database/
+COPY src/Services/Atlas.Ledger/Atlas.Ledger.csproj src/Services/Atlas.Ledger/
+
+# Restore dependencies with security scanning
+RUN dotnet restore src/Services/Atlas.Ledger/Atlas.Ledger.csproj --runtime linux-musl-x64
+
+# Copy source code
+COPY . .
+
+# Build the application with security optimizations
+WORKDIR /src/src/Services/Atlas.Ledger
+RUN dotnet publish Atlas.Ledger.csproj -c Release -o /app/publish \
+    --runtime linux-musl-x64 \
+    --self-contained false \
+    /p:PublishSingleFile=false \
+    /p:PublishTrimmed=true \
+    /p:TrimMode=partial \
+    /p:EnableCompressionInSingleFile=true
+
+# Runtime stage - MINIMAL SECURITY HARDENED
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS runtime
+WORKDIR /app
+
+# Install security updates and minimal required packages
+RUN apk update && apk upgrade && \
+    apk add --no-cache ca-certificates tzdata && \
+    rm -rf /var/cache/apk/*
+
+# Create non-root user with specific UID/GID for security
+RUN addgroup -g 1001 -S ledgeruser && \
+    adduser -u 1001 -S ledgeruser -G ledgeruser
+
+# Copy published application
+COPY --from=build /app/publish .
+
+# Set proper permissions and ownership
+RUN chown -R ledgeruser:ledgeruser /app && \
+    chmod -R 755 /app
+
+# Switch to non-root user
+USER ledgeruser
+
+# Set security-focused environment variables
+ENV ASPNETCORE_URLS=http://+:5181
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+ENV DOTNET_EnableDiagnostics=0
+ENV DOTNET_UseSharedCompilation=false
+ENV DOTNET_UseServerGC=true
+ENV DOTNET_gcServer=1
+ENV DOTNET_gcConcurrent=1
+
+# Expose port
+EXPOSE 5181
+
+# Health check using wget (no curl dependency)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:5181/health || exit 1
+
+# Set resource limits
+RUN echo "ledgeruser soft nofile 65536" >> /etc/security/limits.conf && \
+    echo "ledgeruser hard nofile 65536" >> /etc/security/limits.conf
+
+# Entry point
+ENTRYPOINT ["dotnet", "Atlas.Ledger.dll"]

@@ -1,0 +1,295 @@
+# Monitoring and Alerting Configuration for AtlasBank Trust Portal
+
+## Prometheus Metrics Configuration
+```yaml
+# prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "trust_portal_alerts.yml"
+
+scrape_configs:
+  - job_name: 'trust-portal'
+    static_configs:
+      - targets: ['trust-portal:5802']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+```
+
+## Alert Rules
+```yaml
+# trust_portal_alerts.yml
+groups:
+  - name: trust_portal_alerts
+    rules:
+      - alert: TrustPortalDown
+        expr: up{job="trust-portal"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trust Portal is down"
+          description: "Trust Portal has been down for more than 1 minute"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second"
+
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }} seconds"
+
+      - alert: RateLimitExceeded
+        expr: rate(rate_limit_exceeded_total[5m]) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limit exceeded frequently"
+          description: "Rate limit exceeded {{ $value }} times per second"
+
+      - alert: BadgeGenerationFailure
+        expr: rate(badge_generation_failures_total[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Badge generation failures detected"
+          description: "Badge generation failure rate is {{ $value }} failures per second"
+
+      - alert: RegulatorAPIAccess
+        expr: rate(regulator_api_unauthorized_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Unauthorized regulator API access attempts"
+          description: "{{ $value }} unauthorized attempts per second"
+```
+
+## Grafana Dashboard Configuration
+```json
+{
+  "dashboard": {
+    "title": "AtlasBank Trust Portal",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])",
+            "legendFormat": "{{method}} {{path}}"
+          }
+        ]
+      },
+      {
+        "title": "Response Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "95th percentile"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+            "legendFormat": "5xx errors"
+          }
+        ]
+      },
+      {
+        "title": "Badge Generation",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(badge_generation_total[5m])",
+            "legendFormat": "Badges generated"
+          }
+        ]
+      },
+      {
+        "title": "Regulator API Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(regulator_api_requests_total[5m])",
+            "legendFormat": "Regulator API calls"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+## Health Check Endpoints
+```csharp
+// Health check endpoints for monitoring
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+app.MapGet("/health/ready", () => Results.Ok(new { status = "ready", timestamp = DateTime.UtcNow }));
+app.MapGet("/health/live", () => Results.Ok(new { status = "live", timestamp = DateTime.UtcNow }));
+
+// Metrics endpoint for Prometheus
+app.MapGet("/metrics", () => 
+{
+    // Return Prometheus metrics
+    return Results.Text(GetPrometheusMetrics(), "text/plain");
+});
+```
+
+## Log Aggregation Configuration
+```yaml
+# fluentd.conf
+<source>
+  @type tail
+  path /var/log/trust-portal/*.log
+  pos_file /var/log/fluentd/trust-portal.log.pos
+  tag trust-portal
+  format json
+</source>
+
+<match trust-portal>
+  @type elasticsearch
+  host elasticsearch
+  port 9200
+  index_name trust-portal
+  type_name log
+</match>
+```
+
+## Alert Manager Configuration
+```yaml
+# alertmanager.yml
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@atlasbank.com'
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+
+receivers:
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://webhook:5001/'
+  - name: 'email'
+    email_configs:
+      - to: 'ops@atlasbank.com'
+        subject: 'AtlasBank Trust Portal Alert'
+        body: |
+          Alert: {{ .GroupLabels.alertname }}
+          Summary: {{ .CommonAnnotations.summary }}
+          Description: {{ .CommonAnnotations.description }}
+```
+
+## Custom Metrics Implementation
+```csharp
+// Custom metrics for business logic
+public class TrustPortalMetrics
+{
+    private readonly Counter _badgeGenerationTotal;
+    private readonly Counter _badgeGenerationFailures;
+    private readonly Counter _regulatorApiRequests;
+    private readonly Counter _regulatorApiUnauthorized;
+    private readonly Counter _rateLimitExceeded;
+
+    public TrustPortalMetrics()
+    {
+        _badgeGenerationTotal = Metrics.CreateCounter("badge_generation_total", "Total badge generations");
+        _badgeGenerationFailures = Metrics.CreateCounter("badge_generation_failures_total", "Badge generation failures");
+        _regulatorApiRequests = Metrics.CreateCounter("regulator_api_requests_total", "Regulator API requests");
+        _regulatorApiUnauthorized = Metrics.CreateCounter("regulator_api_unauthorized_total", "Unauthorized regulator API attempts");
+        _rateLimitExceeded = Metrics.CreateCounter("rate_limit_exceeded_total", "Rate limit exceeded");
+    }
+
+    public void IncrementBadgeGeneration() => _badgeGenerationTotal.Inc();
+    public void IncrementBadgeGenerationFailure() => _badgeGenerationFailures.Inc();
+    public void IncrementRegulatorApiRequest() => _regulatorApiRequests.Inc();
+    public void IncrementRegulatorApiUnauthorized() => _regulatorApiUnauthorized.Inc();
+    public void IncrementRateLimitExceeded() => _rateLimitExceeded.Inc();
+}
+```
+
+## Docker Compose for Monitoring Stack
+```yaml
+# monitoring-stack.yml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./trust_portal_alerts.yml:/etc/prometheus/trust_portal_alerts.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana-dashboard.json:/var/lib/grafana/dashboards/trust-portal.json
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+  elasticsearch:
+    image: elasticsearch:8.8.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: kibana:8.8.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+```
+
+## Monitoring Checklist
+- [ ] Prometheus metrics collection
+- [ ] Grafana dashboards configured
+- [ ] Alert rules defined and tested
+- [ ] Health check endpoints implemented
+- [ ] Log aggregation setup
+- [ ] Alert notifications configured
+- [ ] Performance baselines established
+- [ ] SLA monitoring in place
+- [ ] Capacity planning metrics
+- [ ] Security monitoring alerts
+

@@ -6,13 +6,22 @@ using Atlas.Common.ValueObjects;
 using StackExchange.Redis;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
+using Atlas.Ledger.Api.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure database
+// Configure and validate options
+builder.Services.Configure<LedgerApiOptions>(builder.Configuration.GetSection(LedgerApiOptions.SectionName));
+builder.Services.AddSingleton<IValidateOptions<LedgerApiOptions>, LedgerApiOptionsValidator>();
+
+// Configure database - NO HARDCODED FALLBACKS
 var cs = builder.Configuration.GetConnectionString("Ledger") ?? 
-         Environment.GetEnvironmentVariable("LEDGER_DB") ?? 
-         "Host=atlas-postgres;Port=5432;Database=atlas_bank;Username=atlas;Password=atlas123";
+         Environment.GetEnvironmentVariable("LEDGER_DB");
+         
+if (string.IsNullOrEmpty(cs))
+{
+    throw new InvalidOperationException("Database connection string must be configured via ConnectionStrings:Ledger or LEDGER_DB environment variable");
+}
 
 builder.Services.AddDbContext<LedgerDbContext>(o => o.UseNpgsql(cs));
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
@@ -36,12 +45,16 @@ builder.Services.AddSingleton<Atlas.Ledger.App.FastTransferHandler>(sp =>
     return new Atlas.Ledger.App.FastTransferHandler(ds, logger);
 });
 
-// Add Redis multiplexer
+// Add Redis multiplexer - NO HARDCODED FALLBACKS
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
 {
     var connectionString = builder.Configuration.GetConnectionString("Redis") ?? 
-                          Environment.GetEnvironmentVariable("REDIS") ?? 
-                          "atlas-redis:6379";
+                          Environment.GetEnvironmentVariable("REDIS");
+                          
+    if (string.IsNullOrEmpty(connectionString))
+    {
+        throw new InvalidOperationException("Redis connection string must be configured via ConnectionStrings:Redis or REDIS environment variable");
+    }
     
     var configuration = ConfigurationOptions.Parse(connectionString);
     configuration.AbortOnConnectFail = false;
